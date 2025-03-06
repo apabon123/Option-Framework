@@ -4,15 +4,12 @@ Test configuration loading
 
 import os
 import sys
-import yaml
-import pandas as pd
-from datetime import datetime
 
 # Add the project root to the path so we can import the core modules
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 from core.trading_engine import TradingEngine
-from example_strategy import SimpleOptionStrategy
+from strategies.example_strategy import SimpleOptionStrategy
 
 def test_config_loading():
     """Test that config loading works correctly."""
