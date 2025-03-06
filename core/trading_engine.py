@@ -160,35 +160,37 @@ class LoggingManager:
         logger.info(f"[INIT] Log file: {log_filename}")
         
         return logger
-    
+
     class StatusOnlyFilter(logging.Filter):
         """Filter that allows only essential status update logs to console."""
-        
+
         def filter(self, record):
             # Always filter out DEBUG level messages from console
             if record.levelno == logging.DEBUG:
                 return False
-                
+
             # For INFO level - only show essential status messages
             if record.levelno == logging.INFO:
-                # Only show progress updates and initialization messages
-                if record.msg.startswith("Progress:") or "[INIT]" in record.msg:
+                # Show processing date messages
+                if record.msg.startswith("Processing ") or "[INIT]" in record.msg:
                     return True
-                # Filter out all other INFO messages
-                return False
-            
+                # Filter out most INFO messages
+                if not "ERROR" in record.msg and not "CRITICAL" in record.msg:
+                    return False
+
             # For WARNING level - only show critical warnings
             if record.levelno == logging.WARNING:
-                # Only show DELTA warnings (important for the user)
-                if "DELTA WARNING" in record.msg:
+                # Only show severe warnings
+                if "CRITICAL" in record.msg:
                     return True
-                # Filter out other warnings
-                return False
-                
+                # Filter out common warnings
+                if "DELTA WARNING" in record.msg:
+                    return False
+
             # Show all ERROR and CRITICAL messages
             if record.levelno >= logging.ERROR:
                 return True
-                
+
             # Default - filter out
             return False
     
@@ -549,7 +551,8 @@ class TradingEngine:
             dict: Results of the backtest
         """
         # Clear, concise startup message that will be displayed to the user
-        self.logger.info(f"[INIT] Starting backtest: {self.start_date.strftime('%Y-%m-%d')} to {self.end_date.strftime('%Y-%m-%d')}")
+        self.logger.info(
+            f"[INIT] Starting backtest: {self.start_date.strftime('%Y-%m-%d')} to {self.end_date.strftime('%Y-%m-%d')}")
 
         # Initialize results tracking
         results = {
@@ -564,11 +567,15 @@ class TradingEngine:
 
         # Get the date range for the backtest
         date_range = self.get_date_range()
+        total_dates = len(date_range)
 
         # Run the simulation for each date
-        for current_date in date_range:
+        for i, current_date in enumerate(date_range):
             date_str = current_date.strftime('%Y-%m-%d')
-            self.logger.info(f"[Engine] Processing date: {date_str}")
+
+            # Simple, clean progress indicator that shows date and percentage
+            percent_complete = (i + 1) / total_dates * 100
+            self.logger.info(f"Processing {date_str} [{percent_complete:.1f}%]")
             
             # Rearranged the flow to fix PnL calculation and pre-trade summary
             # Get data for the current date (moved this section up from below)

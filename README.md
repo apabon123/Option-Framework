@@ -1,4 +1,4 @@
-# Python Quantitative Finance Trading System
+# Python Option Framework
 
 A comprehensive backtesting framework for options trading strategies with a focus on theta decay and delta hedging.
 

@@ -496,38 +496,44 @@ class Portfolio:
             'max_drawdown': max_drawdown,
             'cagr': cagr
         }
-    
+
     def _check_portfolio_delta_constraint(self) -> bool:
         """
         Check if portfolio delta is within constraints.
-        
+
         Returns:
             bool: True if within constraints, False otherwise
         """
         greeks = self.get_portfolio_greeks()
         portfolio_value = self.get_portfolio_value()
-        
+
         # Calculate delta percentage
         delta_pct = abs(greeks['delta_pct'])
-        
+
         if delta_pct > self.max_portfolio_delta:
-            # Create a more informative warning message with position details
-            positions_info = []
-            for symbol, pos in self.positions.items():
-                pos_delta = pos.current_delta * pos.contracts
-                pos_delta_pct = pos_delta / portfolio_value if portfolio_value > 0 else 0
-                positions_info.append(f"{symbol}: {pos_delta:.3f} ({pos_delta_pct:.2%})")
-                
-            self.logger.warning(
-                f"[DELTA WARNING] Portfolio delta ({delta_pct:.2%}) exceeds maximum allowed ({self.max_portfolio_delta:.2%})")
-            self.logger.warning(
-                f"  Portfolio value: ${portfolio_value:,.2f}, Total delta: {greeks['delta']:.3f}")
-            self.logger.warning(
-                f"  Position deltas: {', '.join(positions_info)}")
-            self.logger.warning(
-                f"  Consider adding hedges to reduce delta exposure")
+            # Log at DEBUG level instead of WARNING to reduce console output
+            # Only log once per day to reduce spam
+            if not hasattr(self, '_last_delta_warning_date') or self._last_delta_warning_date != datetime.now().date():
+                self.logger.debug(
+                    f"[DELTA WARNING] Portfolio delta ({delta_pct:.2%}) exceeds maximum allowed ({self.max_portfolio_delta:.2%})")
+                self.logger.debug(
+                    f"  Portfolio value: ${portfolio_value:,.2f}, Total delta: {greeks['delta']:.3f}")
+
+                # Store positions info for debugging but don't log to console
+                positions_info = []
+                for symbol, pos in self.positions.items():
+                    pos_delta = pos.current_delta * pos.contracts
+                    pos_delta_pct = pos_delta / portfolio_value if portfolio_value > 0 else 0
+                    positions_info.append(f"{symbol}: {pos_delta:.3f} ({pos_delta_pct:.2%})")
+
+                self.logger.debug(f"  Position deltas: {', '.join(positions_info)}")
+                self.logger.debug(f"  Consider adding hedges to reduce delta exposure")
+
+                # Track the date to prevent multiple warnings on the same day
+                self._last_delta_warning_date = datetime.now().date()
+
             return False
-            
+
         return True
 
     def _update_portfolio_value(self):
