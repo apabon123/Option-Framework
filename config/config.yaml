@@ -1,4 +1,4 @@
-# Configuration for theta engine trading strategy
+# Configuration for options trading strategy
 
 # File paths
 paths:
@@ -31,7 +31,7 @@ risk:
 
 # Strategy parameters
 strategy:
-  name: "ThetaEngine"
+  name: "SimpleOptionStrategy"
   # Hedging configuration
   enable_hedging: true
   hedge_mode: "ratio"

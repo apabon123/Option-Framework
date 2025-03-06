@@ -37,18 +37,29 @@ def get_strategy_class(strategy_name):
         Strategy class
     """
     try:
-        # First try to import from strategies package
-        module_name = f"strategies.{strategy_name.lower()}"
-        module = importlib.import_module(module_name)
-        return getattr(module, strategy_name)
-    except (ImportError, AttributeError):
+        # First check if we can directly import it from example_strategy
+        # This is a direct fallback for SimpleOptionStrategy
+        if strategy_name == "SimpleOptionStrategy":
+            from strategies.example_strategy import SimpleOptionStrategy
+            return SimpleOptionStrategy
+
+        # Try the general approach for other strategies
         try:
-            # Fall back to direct import if it's a fully qualified name
-            module_name, class_name = strategy_name.rsplit('.', 1)
+            # First try to import from strategies package
+            module_name = f"strategies.{strategy_name.lower()}"
             module = importlib.import_module(module_name)
-            return getattr(module, class_name)
-        except (ValueError, ImportError, AttributeError):
-            raise ImportError(f"Could not import strategy class: {strategy_name}")
+            return getattr(module, strategy_name)
+        except (ImportError, AttributeError):
+            try:
+                # Fall back to direct import if it's a fully qualified name
+                module_name, class_name = strategy_name.rsplit('.', 1)
+                module = importlib.import_module(module_name)
+                return getattr(module, class_name)
+            except (ValueError, ImportError, AttributeError):
+                raise ImportError(f"Could not import strategy class: {strategy_name}")
+    except Exception as e:
+        print(f"Error importing strategy: {e}")
+        raise ImportError(f"Could not import strategy class: {strategy_name}")
 
 
 def parse_args():
