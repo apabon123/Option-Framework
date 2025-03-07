@@ -39,7 +39,7 @@ class Portfolio:
             max_portfolio_delta: Maximum absolute portfolio delta as percentage of portfolio value
             logger: Logger instance
         """
-        self.logger = logger or logging.getLogger('trading')
+        self.logger = logger or logging.getLogger('trading_engine')
         self.initial_capital = initial_capital
         self.cash_balance = initial_capital
         self.max_position_size_pct = max_position_size_pct
@@ -49,54 +49,133 @@ class Portfolio:
         self.positions: Dict[str, Position] = {}
         
         # Performance tracking
+        self.transactions: List[Dict[str, Any]] = []
+        self.daily_returns: List[Dict[str, Any]] = []
         self.equity_history: Dict[datetime, float] = {}
+        
+        # Track position value separately from cash
+        self.position_value = 0
+        self.total_value = initial_capital
+        
+        # Initial equity history entry
         self.equity_history[datetime.now()] = initial_capital
         
-        # Daily performance metrics
-        self.daily_returns: List[Dict[str, Any]] = []
+        # Track realized PnL for the current day
+        self.today_realized_pnl = 0
         
-        # Transaction log
-        self.transactions: List[Dict[str, Any]] = []
-        
+        # Log initialization
         self.logger.info(f"Portfolio initialized with ${initial_capital:,.2f} capital")
         self.logger.info(f"  Max position size: {max_position_size_pct:.1%} of portfolio")
         self.logger.info(f"  Max portfolio delta: {max_portfolio_delta:.1%} of portfolio value")
     
+    def get_portfolio_value(self) -> float:
+        """
+        Get the current total portfolio value.
+        
+        Returns:
+            float: Portfolio value in dollars
+        """
+        # Update portfolio value before returning
+        self._update_portfolio_value()
+        return self.total_value
+    
+    def get_portfolio_metrics(self) -> Dict[str, Any]:
+        """
+        Get comprehensive portfolio metrics.
+        
+        Returns:
+            dict: Dictionary of portfolio metrics
+        """
+        # Calculate portfolio value
+        portfolio_value = self.get_portfolio_value()
+        
+        # Calculate Greeks
+        greeks = self.get_portfolio_greeks()
+        
+        # Calculate exposure metrics (margin based)
+        total_margin = 0
+        for position in self.positions.values():
+            if hasattr(position, 'calculate_margin_requirement'):
+                margin = position.calculate_margin_requirement(1.0)  # Use basic margin without leverage
+                total_margin += margin
+        
+        # Calculate available margin and leverage
+        max_margin = portfolio_value  # Maximum margin is 1x NLV by default
+        available_margin = max(max_margin - total_margin, 0)
+        current_leverage = total_margin / portfolio_value if portfolio_value > 0 else 0
+        
+        return {
+            'portfolio_value': portfolio_value,
+            'cash_balance': self.cash_balance,
+            'position_value': self.position_value,
+            'position_count': len(self.positions),
+            'realized_pnl': sum(p.realized_pnl for p in self.positions.values()),
+            'unrealized_pnl': sum(p.unrealized_pnl for p in self.positions.values()),
+            'total_margin': total_margin,
+            'available_margin': available_margin,
+            'current_leverage': current_leverage,
+            'max_leverage': 1.0,  # Default max leverage is 1x
+            'net_liquidation_value': portfolio_value,
+            'delta': greeks['delta'],
+            'gamma': greeks['gamma'],
+            'theta': greeks['theta'],
+            'vega': greeks['vega'],
+            'delta_pct': greeks['delta_pct'],
+            'dollar_delta': greeks['dollar_delta'],
+            'dollar_gamma': greeks['dollar_gamma'],
+            'dollar_theta': greeks['dollar_theta'],
+            'dollar_vega': greeks['dollar_vega']
+        }
+    
     def add_position(
         self, 
         symbol: str, 
-        instrument_data: Dict[str, Any], 
-        quantity: int, 
-        price: float, 
+        instrument_data: Dict[str, Any],
+        quantity: int = 1, 
+        price: Optional[float] = None,
         position_type: str = 'option',
-        is_short: bool = False,
+        is_short: bool = True,
         execution_data: Optional[Dict[str, Any]] = None
-    ) -> Position:
+    ) -> Optional[Position]:
         """
-        Add a new position or add to an existing position in the portfolio.
+        Add a new position or add to an existing position.
         
         Args:
-            symbol: Instrument symbol
-            instrument_data: Instrument data dictionary
-            quantity: Quantity to add
-            price: Price per unit
+            symbol: Position symbol
+            instrument_data: Dictionary of instrument data
+            quantity: Number of contracts
+            price: Execution price (None = use current price)
             position_type: Type of position ('option', 'stock', etc.)
             is_short: Whether this is a short position
             execution_data: Additional execution data
             
         Returns:
-            Position: The position object
+            Position: Added or updated position object, or None if failed
         """
-        # Check position size constraint
-        position_value = price * quantity * 100 if position_type == 'option' else price * quantity
-        portfolio_value = self.get_portfolio_value()
-        
-        # Only apply position size constraint when portfolio value is positive
-        if portfolio_value > 0 and position_value / portfolio_value > self.max_position_size_pct:
-            self.logger.warning(
-                f"Position size (${position_value:,.2f}) exceeds maximum allowed ({self.max_position_size_pct:.1%} of ${portfolio_value:,.2f})")
+        if quantity <= 0:
+            self.logger.error(f"Cannot add position for {symbol}: Invalid quantity {quantity}")
+            return None
             
-            # Reduce quantity to max allowed
+        if price is None:
+            # Get price from market data
+            if hasattr(instrument_data, 'get'):
+                price = instrument_data.get('MidPrice', 0)
+            else:
+                price = instrument_data['MidPrice'] if 'MidPrice' in instrument_data else 0
+                
+        if price <= 0:
+            self.logger.error(f"Cannot add position for {symbol}: Invalid price ${price}")
+            return None
+            
+        # Calculate position value
+        position_value = price * quantity * 100 if position_type == 'option' else price * quantity
+        
+        # Check if position exceeds maximum allowed size
+        portfolio_value = self.get_portfolio_value()
+        if position_value > portfolio_value * self.max_position_size_pct:
+            self.logger.warning(f"Position value ${position_value:,.2f} exceeds maximum allowed size (${portfolio_value * self.max_position_size_pct:,.2f})")
+            
+            # Reduce quantity to fit within maximum allowed size
             max_allowed_value = portfolio_value * self.max_position_size_pct
             if position_type == 'option':
                 max_quantity = int(max_allowed_value / (price * 100))
@@ -200,15 +279,26 @@ class Portfolio:
         if price is None:
             price = position.current_price
             
-        # Close the position
-        pnl = position.remove_contracts(quantity, price, execution_data, reason)
+        if price <= 0:
+            self.logger.warning(f"Invalid price for removal: ${price}")
+            return 0
+            
+        # Calculate the value of the removed contracts based on position type
+        position_value = price * quantity
+        if isinstance(position, OptionPosition):
+            position_value *= 100  # Option contracts are x100
+            
+        # Update realized PnL
+        pnl = position.remove_contracts(quantity, price, execution_data)
         
-        # Update cash balance
-        position_value = price * quantity * 100 if isinstance(position, OptionPosition) else price * quantity
+        # Track today's realized PnL
+        self.today_realized_pnl += pnl
+        
+        # Update cash balance - inverse of add position
         if position.is_short:
-            self.cash_balance -= position_value  # Short positions reduce cash when closed
+            self.cash_balance -= position_value  # Short closing reduces cash (pay to close)
         else:
-            self.cash_balance += position_value  # Long positions add cash when closed
+            self.cash_balance += position_value  # Long closing adds cash (receive proceeds)
             
         # Record transaction
         transaction_date = datetime.now()
@@ -218,142 +308,203 @@ class Portfolio:
         transaction = {
             'date': transaction_date,
             'symbol': symbol,
-            'action': 'BUY' if position.is_short else 'SELL',  # Opposite of original action
+            'action': 'BUY' if position.is_short else 'SELL',  # Closing action is opposite of position type
             'quantity': quantity,
             'price': price,
             'value': position_value,
+            'type': 'option' if isinstance(position, OptionPosition) else 'stock',
+            'cash_balance': self.cash_balance,
             'pnl': pnl,
-            'reason': reason,
-            'cash_balance': self.cash_balance
+            'reason': reason
         }
         self.transactions.append(transaction)
         
-        # Remove position if fully closed
-        if position.contracts == 0:
-            del self.positions[symbol]
-            
-        self.logger.info(f"Removed {quantity} {'short' if position.is_short else 'long'} {symbol} @ ${price:.2f}")
-        self.logger.info(f"  P&L: ${pnl:,.2f}")
+        self.logger.info(f"Removed position {symbol}: {quantity} contracts at ${price:.2f}")
+        self.logger.info(f"  Realized P&L: ${pnl:.2f}")
         self.logger.info(f"  New cash balance: ${self.cash_balance:,.2f}")
         
+        # If all contracts removed, delete position
+        if position.contracts == 0:
+            self.logger.info(f"Position {symbol} closed entirely")
+            del self.positions[symbol]
+            
         return pnl
     
-    def update_market_data(
-        self, 
-        market_data_by_symbol: Dict[str, Dict[str, Any]],
-        current_date: Optional[datetime] = None
-    ) -> None:
+    def update_market_data(self, market_data_by_symbol: Dict[str, Any], current_date: Optional[datetime] = None) -> None:
         """
         Update all positions with latest market data.
         
         Args:
             market_data_by_symbol: Dictionary of market data by symbol
-            current_date: Current date for tracking
+            current_date: Current date for this update (optional)
         """
-        if not current_date:
-            current_date = datetime.now()
+        # Skip if there are no positions
+        if not self.positions:
+            return
             
-        # Store previous portfolio value for return calculation
-        previous_value = self.get_portfolio_value()
+        # Store portfolio value before update for return calculation
+        prev_value = self.get_portfolio_value()
         
-        # Track PnL components
-        unrealized_pnl_change = 0
-        realized_pnl = 0
+        # Reset today's realized PnL
+        self.today_realized_pnl = 0
         
-        # Make sure all positions use the same underlying price for each ticker
-        underlying_prices = {}
+        # Keep track of positions updated
+        updated_positions = []
+        positions_to_remove = []  # For expired options
         
-        # First pass: extract all unique underlying prices
-        for symbol, market_data in market_data_by_symbol.items():
-            if 'UnderlyingSymbol' in market_data and 'UnderlyingPrice' in market_data:
-                underlying_symbol = market_data['UnderlyingSymbol']
-                underlying_price = market_data['UnderlyingPrice']
-                if underlying_symbol not in underlying_prices:
-                    underlying_prices[underlying_symbol] = underlying_price
-        
-        # Update each position
+        # Update each position with latest market data
         for symbol, position in list(self.positions.items()):
             if symbol in market_data_by_symbol:
-                # Get previous unrealized PnL
-                prev_unrealized = position.unrealized_pnl
+                # Get market data for this position
+                market_data = market_data_by_symbol[symbol]
                 
-                # Create a copy of market data to avoid modifying the original
-                position_market_data = market_data_by_symbol[symbol].copy()
+                # Store previous market data
+                position.prev_price = position.current_price
                 
-                # Override UnderlyingPrice with the common price for this underlying if available
-                if 'UnderlyingSymbol' in position_market_data:
-                    underlying_symbol = position_market_data['UnderlyingSymbol']
-                    if underlying_symbol in underlying_prices:
-                        position_market_data['UnderlyingPrice'] = underlying_prices[underlying_symbol]
+                # Extract market data
+                if hasattr(market_data, 'get'):
+                    # Dict-like object
+                    price = market_data.get('MidPrice', position.current_price)
+                    delta = market_data.get('Delta', position.current_delta)
+                    gamma = market_data.get('Gamma', position.current_gamma)
+                    theta = market_data.get('Theta', position.current_theta)
+                    vega = market_data.get('Vega', position.current_vega)
+                    days_to_expiry = market_data.get('DaysToExpiry', position.days_to_expiry if hasattr(position, 'days_to_expiry') else None)
+                    underlying_price = market_data.get('UnderlyingPrice')
+                else:
+                    # Pandas Series or DataFrame row
+                    price = market_data['MidPrice'] if 'MidPrice' in market_data else position.current_price
+                    delta = market_data['Delta'] if 'Delta' in market_data else position.current_delta
+                    gamma = market_data['Gamma'] if 'Gamma' in market_data else position.current_gamma
+                    theta = market_data['Theta'] if 'Theta' in market_data else position.current_theta
+                    vega = market_data['Vega'] if 'Vega' in market_data else position.current_vega
+                    days_to_expiry = market_data['DaysToExpiry'] if 'DaysToExpiry' in market_data else (position.days_to_expiry if hasattr(position, 'days_to_expiry') else None)
+                    underlying_price = market_data['UnderlyingPrice'] if 'UnderlyingPrice' in market_data else None
                 
-                # Update position with market data
-                position.update_market_data(position_market_data)
+                # Update position with new market data
+                position.current_price = price
+                position.current_delta = delta
+                position.current_gamma = gamma
+                position.current_theta = theta
+                position.current_vega = vega
                 
-                # Calculate change in unrealized PnL
-                unrealized_pnl_change += (position.unrealized_pnl - prev_unrealized)
+                # Update underlying price if available
+                if underlying_price is not None:
+                    position.underlying_price = underlying_price
+                
+                # Update days to expiry for option positions
+                if isinstance(position, OptionPosition) and days_to_expiry is not None:
+                    position.days_to_expiry = days_to_expiry
+                    
+                    # Check for expired options
+                    if days_to_expiry <= 0:
+                        positions_to_remove.append((symbol, "Expired"))
+                
+                # Recalculate unrealized P&L
+                position.update_unrealized_pnl()
+                
+                # Mark position as updated
+                updated_positions.append(symbol)
             else:
-                self.logger.warning(f"No market data for position {symbol}")
+                self.logger.debug(f"No market data available for {symbol}")
                 
-        # Calculate new portfolio value
-        new_value = self.get_portfolio_value()
-        
-        # Calculate daily return
-        if previous_value > 0:
-            daily_return = (new_value - previous_value) / previous_value
-        else:
-            daily_return = 0
+        # Log update summary
+        if updated_positions:
+            self.logger.debug(f"Updated market data for {len(updated_positions)} positions")
             
-        # Record equity history
-        self.equity_history[current_date] = new_value
-        
-        # Record daily return
-        self.daily_returns.append({
-            'date': current_date,
-            'return': daily_return,
-            'portfolio_value': new_value,
-            'unrealized_pnl_change': unrealized_pnl_change,
-            'realized_pnl': realized_pnl
-        })
-        
-        self.logger.info(f"Updated market data for {len(self.positions)} positions")
-        self.logger.info(f"  Current portfolio value: ${new_value:,.2f}")
-        self.logger.info(f"  Daily return: {daily_return:.2%} (${new_value - previous_value:,.2f})")
-    
-    def get_portfolio_value(self) -> float:
-        """
-        Get current total portfolio value (NLV).
-        
-        Returns:
-            float: Portfolio value in dollars
-        """
-        # Add up position values and cash
-        total_value = self.cash_balance
-        
-        for symbol, position in self.positions.items():
-            position_value = 0
+            # Calculate new portfolio value
+            current_value = self.get_portfolio_value()
+            daily_return = (current_value - prev_value) / prev_value if prev_value > 0 else 0
             
-            if isinstance(position, OptionPosition):
-                position_value = position.current_price * position.contracts * 100
-            else:
-                position_value = position.current_price * position.contracts
+            # Log daily return if date is provided
+            if current_date:
+                self.logger.info("===========================================")
+                self.logger.info(f"POST-TRADE Summary [{current_date.strftime('%Y-%m-%d')}]:")
+                self.logger.info(f"Daily P&L: ${current_value - prev_value:.0f} ({daily_return:.2%})")
+                self.logger.info(f"  Option PnL: ${current_value - prev_value - self.today_realized_pnl:.0f}")
+                self.logger.info(f"  Realized PnL: ${self.today_realized_pnl:.0f}")
+                self.logger.info(f"Open Trades: {len(self.positions)}")
                 
-            if position.is_short:
-                # For short positions, subtract the current position value
-                total_value -= position_value
-            else:
-                # For long positions, add the current position value
-                total_value += position_value
+                # Calculate total exposure as percentage of NLV
+                total_exposure = 0
+                for pos in self.positions.values():
+                    if isinstance(pos, OptionPosition):
+                        pos_value = abs(pos.current_price * pos.contracts * 100)
+                    else:
+                        pos_value = abs(pos.current_price * pos.contracts)
+                    total_exposure += pos_value
                 
-        return total_value
-    
+                exposure_pct = total_exposure / current_value if current_value > 0 else 0
+                self.logger.info(f"Total Position Exposure: {exposure_pct:.1%} of NLV")
+                self.logger.info(f"Net Liq: ${current_value:.0f}")
+                
+                # Get portfolio metrics for additional information
+                metrics = self.get_portfolio_metrics()
+                greeks = self.get_portfolio_greeks()
+                
+                self.logger.info(f"  Cash Balance: ${self.cash_balance:.0f}")
+                self.logger.info(f"  Total Liability: ${-self.position_value:.0f}")
+                self.logger.info(f"Total Margin Requirement: ${metrics['total_margin']:.0f}")
+                self.logger.info(f"Available Margin: ${metrics['available_margin']:.0f}")
+                self.logger.info(f"Margin-Based Leverage: {metrics['current_leverage']:.2f}")
+                
+                # Portfolio Greek risk section
+                self.logger.info("\nPortfolio Greek Risk:")
+                self.logger.info(f"  Option Delta: {greeks['delta']:.3f} (${greeks['dollar_delta']:.2f})")
+                self.logger.info(f"  Gamma: {greeks['gamma']:.6f} (${greeks['dollar_gamma']:.2f} per 1% move)")
+                self.logger.info(f"  Theta: ${greeks['dollar_theta']:.2f} per day")
+                self.logger.info(f"  Vega: ${greeks['dollar_vega']:.2f} per 1% IV")
+                
+                # Get performance metrics if we have enough history
+                if len(self.daily_returns) >= 5:
+                    perf = self.get_performance_metrics()
+                    self.logger.info("\nRolling Metrics:")
+                    self.logger.info(f"  Sharpe: {perf['sharpe_ratio']:.2f}, Volatility: {perf['volatility']:.2%}")
+                
+                # Print position table
+                self.logger.info("\nOpen Trades Table:")
+                self.logger.info("-" * 120)
+                self.logger.info(f"{'Symbol':<20}{'Contracts':>10}{'Entry':>8}{'Current':>10}{'Value':>10}{'NLV%':>8}{'Delta':>10}")
+                self.logger.info("-" * 120)
+                
+                for symbol, pos in self.positions.items():
+                    if isinstance(pos, OptionPosition):
+                        pos_value = pos.current_price * pos.contracts * 100
+                    else:
+                        pos_value = pos.current_price * pos.contracts
+                    
+                    pos_pct = pos_value / current_value if current_value > 0 else 0
+                    
+                    self.logger.info(f"{symbol:<20}{pos.contracts:>10d}${pos.avg_entry_price:>6.2f}${pos.current_price:>8.2f}${pos_value:>9.0f}{pos_pct:>7.1%}{pos.current_delta:>10.3f}")
+                
+                self.logger.info("-" * 120)
+                self.logger.info(f"TOTAL{' ':>30}${self.position_value:>9.0f}{exposure_pct:>7.1%}")
+                self.logger.info("-" * 120)
+                self.logger.info("===========================================")
+                
+                # Record daily return with components
+                self.daily_returns.append({
+                    'date': current_date,
+                    'return': daily_return,
+                    'value': current_value,
+                    'pnl': current_value - prev_value,
+                    'unrealized_pnl_change': current_value - prev_value - self.today_realized_pnl,
+                    'realized_pnl': self.today_realized_pnl
+                })
+                
+        # Handle expired options
+        for symbol, reason in positions_to_remove:
+            if symbol in self.positions:
+                self.remove_position(symbol, reason=reason)
+                
     def get_portfolio_greeks(self) -> Dict[str, float]:
         """
-        Calculate aggregate portfolio-level Greeks with separate hedge tracking.
+        Calculate portfolio-level Greek risk metrics.
         
         Returns:
-            dict: Portfolio Greeks with option and hedge component separation
+            dict: Dictionary of portfolio Greeks
         """
-        greeks = {
+        portfolio_greeks = {
             'delta': 0.0,
             'gamma': 0.0,
             'theta': 0.0,
@@ -361,109 +512,48 @@ class Portfolio:
             'dollar_delta': 0.0,
             'dollar_gamma': 0.0,
             'dollar_theta': 0.0,
-            'dollar_vega': 0.0,
-            'hedge_delta': 0.0,
-            'dollar_hedge_delta': 0.0,
-            'total_delta': 0.0,
-            'dollar_total_delta': 0.0
+            'dollar_vega': 0.0
         }
         
-        # Sum the option greeks separately from hedge positions
-        for symbol, position in self.positions.items():
-            position_greeks = position.get_greeks()
-            
-            # Check if this is a hedge position (non-option position)
-            is_hedge = not isinstance(position, OptionPosition)
-            
-            if is_hedge:
-                # For hedge positions, we only care about delta
-                if position.is_short:
-                    greeks['hedge_delta'] -= position.contracts  # Short hedge is negative delta
-                else:
-                    greeks['hedge_delta'] += position.contracts  # Long hedge is positive delta
-                
-                # Calculate dollar delta for hedge
-                greeks['dollar_hedge_delta'] = greeks['hedge_delta'] * position.underlying_price * 100
-            else:
-                # For option positions, add to all option greeks
-                for greek, value in position_greeks.items():
-                    if greek in greeks:
-                        greeks[greek] += value
-        
-        # Calculate total delta (options + hedge)
-        greeks['total_delta'] = greeks['delta'] + greeks['hedge_delta'] 
-        greeks['dollar_total_delta'] = greeks['dollar_delta'] + greeks['dollar_hedge_delta']
-                    
-        # Calculate delta percentage (relative to portfolio value)
+        # Calculate portfolio value for delta percentage
         portfolio_value = self.get_portfolio_value()
-        if portfolio_value > 0:
-            greeks['delta_pct'] = greeks['dollar_delta'] / portfolio_value
-            greeks['total_delta_pct'] = greeks['dollar_total_delta'] / portfolio_value
-        else:
-            greeks['delta_pct'] = 0
-            greeks['total_delta_pct'] = 0
-            
-        return greeks
-    
-    def get_portfolio_metrics(self) -> Dict[str, Any]:
-        """
-        Calculate comprehensive portfolio metrics.
         
-        Returns:
-            dict: Portfolio metrics
-        """
-        portfolio_value = self.get_portfolio_value()
-        greeks = self.get_portfolio_greeks()
-        
-        # Count positions by type
-        option_positions = sum(1 for p in self.positions.values() if isinstance(p, OptionPosition))
-        other_positions = len(self.positions) - option_positions
-        
-        # Calculate exposure metrics
-        total_exposure = 0
+        # Sum up position Greeks
         for position in self.positions.values():
-            if isinstance(position, OptionPosition):
-                # For options, use notional exposure (underlying_price * contracts * 100)
-                exposure = position.underlying_price * position.contracts * 100
+            # Get position Greeks - handle both option and non-option positions
+            if hasattr(position, 'get_greeks'):
+                position_greeks = position.get_greeks()
+                # Sum up all Greek values
+                for greek, value in position_greeks.items():
+                    if greek in portfolio_greeks:
+                        portfolio_greeks[greek] += value
             else:
-                # For other instruments, use position value
-                exposure = position.current_price * position.contracts
+                # For non-option positions with simple delta
+                sign = -1 if position.is_short else 1
+                delta = sign * position.current_delta * position.contracts
+                portfolio_greeks['delta'] += delta
                 
-            total_exposure += exposure
-            
-        exposure_ratio = total_exposure / portfolio_value if portfolio_value > 0 else 0
+                # Calculate dollar delta
+                if hasattr(position, 'underlying_price') and position.underlying_price > 0:
+                    portfolio_greeks['dollar_delta'] += delta * position.underlying_price
         
-        return {
-            'portfolio_value': portfolio_value,
-            'cash_balance': self.cash_balance,
-            'delta': greeks['delta'],
-            'gamma': greeks['gamma'],
-            'theta': greeks['theta'],
-            'vega': greeks['vega'],
-            'dollar_delta': greeks['dollar_delta'],
-            'delta_pct': greeks['delta_pct'],
-            'position_count': len(self.positions),
-            'option_positions': option_positions,
-            'other_positions': other_positions,
-            'exposure': total_exposure,
-            'exposure_ratio': exposure_ratio
-        }
+        # Calculate delta as percentage of portfolio value
+        if portfolio_value > 0:
+            portfolio_greeks['delta_pct'] = portfolio_greeks['dollar_delta'] / portfolio_value
+        else:
+            portfolio_greeks['delta_pct'] = 0
+            
+        return portfolio_greeks
     
-    def get_performance_metrics(
-        self, 
-        annualization_factor: int = 252
-    ) -> Dict[str, float]:
+    def get_performance_metrics(self) -> Dict[str, float]:
         """
-        Calculate portfolio performance metrics.
+        Calculate comprehensive performance metrics.
         
-        Args:
-            annualization_factor: Annualization factor (252 for daily returns)
-            
         Returns:
-            dict: Performance metrics
+            dict: Dictionary of performance metrics
         """
-        # Need at least 2 equity values to calculate returns
-        if len(self.equity_history) < 2:
+        # Get portfolio value history
+        if not self.equity_history:
             return {
                 'return': 0,
                 'sharpe_ratio': 0,
@@ -471,18 +561,12 @@ class Portfolio:
                 'max_drawdown': 0,
                 'cagr': 0
             }
-            
-        # Extract equity values and sort by date
+        
+        # Convert equity history to series
         dates = sorted(self.equity_history.keys())
         equity_values = [self.equity_history[date] for date in dates]
         
-        # Calculate returns
-        returns = []
-        for i in range(1, len(equity_values)):
-            if equity_values[i-1] > 0:
-                returns.append((equity_values[i] / equity_values[i-1]) - 1)
-                
-        if not returns:
+        if len(equity_values) < 2:
             return {
                 'return': 0,
                 'sharpe_ratio': 0,
@@ -490,13 +574,34 @@ class Portfolio:
                 'max_drawdown': 0,
                 'cagr': 0
             }
-            
+        
+        # Calculate time-weighted returns
+        returns = []
+        for i in range(1, len(equity_values)):
+            ret = (equity_values[i] / equity_values[i-1]) - 1
+            returns.append(ret)
+        
         # Calculate total return
         total_return = (equity_values[-1] / equity_values[0]) - 1
         
+        # Calculate annualized return (CAGR)
+        first_date = dates[0]
+        last_date = dates[-1]
+        
+        # Handle case where dates are the same
+        if first_date == last_date:
+            years = 0.00273  # 1 day as fraction of year
+        else:
+            years = (last_date - first_date).days / 365.25
+            
+        # Minimum period to avoid division by zero
+        years = max(years, 0.00273)  # Minimum of 1 day
+        
+        # Calculate annualization factor based on return frequency
+        # This is an approximation assuming daily returns
+        annualization_factor = 252
+        
         # Calculate CAGR
-        days = (dates[-1] - dates[0]).days
-        years = days / 365 if days > 0 else 1
         cagr = (equity_values[-1] / equity_values[0]) ** (1 / years) - 1
         
         # Calculate volatility
@@ -699,9 +804,30 @@ class Portfolio:
                 'delta': position.current_delta * position.contracts
             })
             
-        # Convert to DataFrame and sort by allocation
+        # Convert to DataFrame
         df = pd.DataFrame(position_data)
-        if not df.empty:
+        
+        # Sort by allocation (descending)
+        if not df.empty and 'allocation' in df.columns:
             df = df.sort_values('allocation', ascending=False)
+            
+        return df
+    
+    def get_transaction_history(self) -> pd.DataFrame:
+        """
+        Get transaction history as a DataFrame.
+        
+        Returns:
+            DataFrame: Transaction history
+        """
+        if not self.transactions:
+            return pd.DataFrame()
+            
+        # Convert to DataFrame
+        df = pd.DataFrame(self.transactions)
+        
+        # Sort by date
+        if not df.empty and 'date' in df.columns:
+            df = df.sort_values('date')
             
         return df

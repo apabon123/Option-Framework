@@ -39,7 +39,7 @@ class Position:
             logger: Logger instance
         """
         self.symbol = symbol
-        self.logger = logger or logging.getLogger('trading')
+        self.logger = logger or logging.getLogger('trading_engine')
         
         # Handle pandas Series objects correctly
         if hasattr(instrument_data, 'get') and not hasattr(instrument_data, 'iloc'):
@@ -329,6 +329,40 @@ class Position:
             self.max_drawdown = -self.unrealized_pnl
         
         return self.unrealized_pnl
+
+    def update_unrealized_pnl(self):
+        """
+        Update the unrealized PnL based on current price and position type.
+        
+        This is a helper method called by the Portfolio class when updating
+        position market data.
+        """
+        if self.contracts <= 0:
+            self.unrealized_pnl = 0
+            return
+            
+        if self.is_short:
+            # For short positions: entry_price - current_price is the P&L per unit
+            # If current_price goes down, that's profit for short options
+            pnl_per_contract = self.avg_entry_price - self.current_price
+        else:
+            # For long positions: current_price - entry_price is the P&L per unit
+            pnl_per_contract = self.current_price - self.avg_entry_price
+            
+        # Calculate total PnL based on contract size and count
+        # Check if this is an OptionPosition by checking for option-specific attributes
+        is_option = hasattr(self, 'option_symbol') or hasattr(self, 'strike') or hasattr(self, 'expiration')
+        
+        if is_option or self.type is not None:
+            # This is an OptionPosition - multiply by 100
+            self.unrealized_pnl = pnl_per_contract * self.contracts * 100
+        else:
+            # This is a regular Position (e.g., stock)
+            self.unrealized_pnl = pnl_per_contract * self.contracts
+        
+        # Update max drawdown tracking (drawdown is negative PnL)
+        if self.unrealized_pnl < -self.max_drawdown:
+            self.max_drawdown = -self.unrealized_pnl
 
     def calculate_margin_requirement(self, max_leverage: float) -> float:
         """

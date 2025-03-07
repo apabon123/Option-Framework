@@ -41,7 +41,7 @@ class ReportingSystem:
             portfolio: Portfolio instance for performance tracking
             logger: Logger instance
         """
-        self.logger = logger or logging.getLogger('trading')
+        self.logger = logger or logging.getLogger('trading_engine')
         self.config = config
         self.portfolio = portfolio
         
@@ -70,6 +70,7 @@ class ReportingSystem:
         Returns:
             str: File path to the generated HTML report
         """
+        self.logger.info("===========================================")
         self.logger.info(f"Generating HTML report '{report_name}'...")
         
         # Create HTML content
@@ -84,6 +85,7 @@ class ReportingSystem:
             f.write(html_content)
             
         self.logger.info(f"Report saved to {file_path}")
+        self.logger.info("===========================================")
         
         return file_path
     
