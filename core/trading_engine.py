@@ -49,6 +49,92 @@ class LoggingManager:
         self.log_file = None
         self.original_stdout = None
         self.original_stderr = None
+        
+    def log_section_header(self, title: str, date: Optional[datetime] = None) -> None:
+        """
+        Log a section header with optional date.
+        
+        Args:
+            title: Section title
+            date: Optional date to include in header
+        """
+        if self.logger:
+            header = "=" * 50
+            self.logger.info(header)
+            if date:
+                self.logger.info(f"{title} [{date.strftime('%Y-%m-%d')}]:")
+            else:
+                self.logger.info(f"{title}:")
+                
+    def log_section_footer(self) -> None:
+        """Log a section footer."""
+        if self.logger:
+            self.logger.info("=" * 50)
+            
+    def log_subsection_header(self, title: str) -> None:
+        """
+        Log a subsection header.
+        
+        Args:
+            title: Subsection title
+        """
+        if self.logger:
+            self.logger.info("-" * 50)
+            self.logger.info(f"{title}:")
+            
+    def log_trade_manager(self, message: str) -> None:
+        """
+        Log a TradeManager message for trade execution tracking.
+        
+        Args:
+            message: The trade manager message to log
+        """
+        if self.logger:
+            self.logger.info(f"[TradeManager] {message}")
+            
+    def log_risk_scaling(self, message: str, indent: bool = False) -> None:
+        """
+        Log risk scaling metrics and decisions.
+        
+        Args:
+            message: The risk scaling message to log
+            indent: If True, indents the message for nested logging
+        """
+        if self.logger:
+            prefix = "  " if indent else ""
+            self.logger.info(f"{prefix}[Risk Scaling] {message}")
+    
+    def log_hedge_update(self, message: str) -> None:
+        """
+        Log hedge position updates.
+        
+        Args:
+            message: The hedge update message to log
+        """
+        if self.logger:
+            self.logger.info(f"[Hedge Update] {message}")
+            
+    def log_position_update(self, message: str) -> None:
+        """
+        Log position updates.
+        
+        Args:
+            message: The position update message to log
+        """
+        if self.logger:
+            self.logger.info(f"[Position Update] {message}")
+            
+    def log_daily_return(self, message: str, indent: bool = False) -> None:
+        """
+        Log daily return metrics.
+        
+        Args:
+            message: The daily return message to log
+            indent: If True, indents the message for nested logging
+        """
+        if self.logger:
+            prefix = "  " if indent else ""
+            self.logger.info(f"{prefix}[Daily Return] {message}")
 
     def setup_logging(self, config_dict: Dict[str, Any], verbose_console: bool = True, 
                      debug_mode: bool = False, clean_format: bool = True) -> logging.Logger:
@@ -132,571 +218,338 @@ class LoggingManager:
                 
                 # Apply color formatting based on message content
                 if record.levelno >= logging.WARNING:
-                    if "DELTA WARNING" in message:
-                        return f"{self.COLORS['BOLD']}{self.COLORS['WARNING']}{message}{self.COLORS['ENDC']}"
-                    else:
-                        return f"{self.COLORS['WARNING']}{message}{self.COLORS['ENDC']}"
-                elif "[INIT]" in message or "[STATUS]" in message:
-                    return f"{self.COLORS['BOLD']}{self.COLORS['INFO']}{message}{self.COLORS['ENDC']}"
-                elif message.startswith("Progress:"):
-                    # Clean up and highlight progress messages for better visibility
-                    return f"{self.COLORS['BOLD']}{self.COLORS['INFO']}{message}{self.COLORS['ENDC']}"
+                    # Warning/Error messages in yellow/red
+                    level_color = self.COLORS.get(record.levelname, '')
+                    message = f"{level_color}{message}{self.COLORS['ENDC']}"
+                elif '[STATUS]' in message:
+                    # Status messages in bold green
+                    message = f"{self.COLORS['BOLD']}{self.COLORS['INFO']}{message}{self.COLORS['ENDC']}"
+                elif record.levelno == logging.INFO:
+                    # Regular info messages in green
+                    message = f"{self.COLORS['INFO']}{message}{self.COLORS['ENDC']}"
+                else:
+                    # Debug messages in blue
+                    message = f"{self.COLORS['DEBUG']}{message}{self.COLORS['ENDC']}"
                 
                 return message
         
-        # Use colored formatter for console
-        console_formatter = ColoredFormatter('%(message)s')
+        # Use clean format for console to match file output
+        if clean_format:
+            console_formatter = ColoredFormatter('%(message)s')
+        else:
+            console_formatter = ColoredFormatter('%(asctime)s - %(message)s')
+            
         console_handler.setFormatter(console_formatter)
         
-        if not verbose_console:
-            # Filter out debug messages and some info messages from console
-            console_handler.addFilter(self.StatusOnlyFilter())
+        # Only add console handler if verbose_console is True
+        if verbose_console:
+            logger.addHandler(console_handler)
             
-        logger.addHandler(console_handler)
+        # Also redirect stderr to logger for error handling
+        sys.stderr = io.StringIO()
         
-        # Add informative startup messages
-        logger.info(f"[INIT] Trading Engine Initialized")
-        logger.info(f"[INIT] Strategy: {config_dict.get('strategy', {}).get('name', 'Unknown')} with delta target {config_dict.get('strategy', {}).get('delta_target', 'N/A')}")
-        logger.info(f"[INIT] Log file: {log_filename}")
+        # Log basic information about the application
+        logger.info(f"Logger initialized at {log_filename}")
+        
+        # Store logger for later use
+        self.logger = logger
         
         return logger
-
-    class StatusOnlyFilter(logging.Filter):
-        """Filter that allows only essential status update logs to console."""
-
-        def filter(self, record):
-            # Always filter out DEBUG level messages from console
-            if record.levelno == logging.DEBUG:
-                return False
-
-            # For INFO level - only show essential status messages
-            if record.levelno == logging.INFO:
-                # Show processing date messages and status messages
-                if (record.msg.startswith("Processing ") or
-                    "[INIT]" in record.msg or
-                    "[STATUS]" in record.msg or
-                    record.msg.startswith("Progress:")):
-                    return True
-                # Filter out most INFO messages
-                if not "ERROR" in record.msg and not "CRITICAL" in record.msg:
-                    return False
-
-            # For WARNING level - only show critical warnings
-            if record.levelno == logging.WARNING:
-                # Only show severe warnings
-                if "CRITICAL" in record.msg:
-                    return True
-                # Filter out common warnings
-                if "DELTA WARNING" in record.msg:
-                    return False
-
-            # Show all ERROR and CRITICAL messages
-            if record.levelno >= logging.ERROR:
-                return True
-
-            # Default - filter out
-            return False
-    
+        
     def build_log_filename(self, config_dict: Dict[str, Any]) -> str:
         """
-        Build a log filename based on configuration.
+        Build a descriptive log filename based on configuration.
         
         Args:
             config_dict: Configuration dictionary
             
         Returns:
-            str: Log filename
+            str: Formatted log filename
         """
-        # Get strategy name from config
-        strategy_name = config_dict.get('strategy', {}).get('name', 'Strategy')
+        # Get strategy name
+        strategy_name = config_dict.get('strategy', {}).get('name', 'UnknownStrategy')
         
         # Get current timestamp
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
         
-        # Create log filename
-        return f"{strategy_name}_log_{timestamp}.log"
-    
-    def log_status(self, message: str) -> None:
-        """
-        Log a status message that will appear in both log file and console.
+        # Check if this is a backtest or live trading
+        mode = config_dict.get('run_mode', 'backtest')
         
-        Args:
-            message: Message to log
+        # Format filename
+        filename = f"{strategy_name}_{mode}_{timestamp}.log"
+        
+        return filename
+        
+    def get_log_file_path(self) -> Optional[str]:
         """
-        if self.logger:
-            self.logger.info(f"[STATUS] {message}")
-        else:
-            print(f"[STATUS] {message}")
+        Get the path to the current log file.
+        
+        Returns:
+            str: Path to log file, or None if not set
+        """
+        return self.log_file
+        
+    def cleanup(self):
+        """Clean up logging resources and restore stdout/stderr."""
+        if self.original_stdout:
+            sys.stdout = self.original_stdout
+        if self.original_stderr:
+            sys.stderr = self.original_stderr
 
 
 class Strategy:
     """
-    Base strategy class that defines the interface for trading strategies.
+    Base strategy class for implementing trading logic.
     
-    All custom strategies should inherit from this class and implement
-    the required methods.
+    This is an abstract base class that defines the interface for strategies.
+    Concrete strategy implementations should inherit from this class and
+    override the required methods.
     """
     
-    def __init__(self, config_dict: Dict[str, Any], logger: Optional[logging.Logger] = None):
+    def __init__(self, name: str, config: Dict[str, Any], logger: Optional[logging.Logger] = None):
         """
-        Initialize the strategy with configuration.
+        Initialize the strategy.
         
         Args:
-            config_dict: Strategy configuration dictionary
+            name: Strategy name
+            config: Strategy configuration dictionary
             logger: Logger instance
         """
-        # Ensure config is a dictionary to prevent attribute errors
-        self.config = {} if config_dict is None else config_dict
+        self.name = name
+        self.config = config
         self.logger = logger or logging.getLogger('trading_engine')
         
-        # Get name safely
-        if isinstance(self.config, dict) and 'name' in self.config:
-            self.name = self.config['name']
-        else:
-            self.name = 'BaseStrategy'
-    
+        # Performance tracking
+        self.performance_history = []
+        
     def generate_signals(self, current_date: datetime, daily_data: pd.DataFrame) -> List[Dict[str, Any]]:
         """
         Generate trading signals for the current date.
         
+        This is the main entry point for strategy implementations.
+        
         Args:
-            current_date: Current date
-            daily_data: Data for current date
+            current_date: Current trading date
+            daily_data: Data for the current trading day
             
         Returns:
-            list: List of signal dictionaries
+            list: List of trading signal dictionaries
         """
-        # Base implementation - no signals
+        # This is an abstract method that should be overridden by concrete strategies
+        self.logger.warning("Using base Strategy.generate_signals - this should be overridden")
         return []
-    
-    def check_exit_conditions(self, position: Position, market_data: Dict[str, Any]) -> Tuple[bool, Optional[str]]:
+        
+    def check_exit_conditions(self, position: Position, market_data: Dict[str, Any]) -> Tuple[bool, str]:
         """
-        Check if exit conditions are met for a position.
+        Check if a position should be exited based on market conditions.
         
         Args:
             position: Position to check
-            market_data: Market data for position
+            market_data: Current market data for the position's symbol
             
         Returns:
-            tuple: (exit_flag, reason) - Whether to exit and why
+            tuple: (should_exit, reason) - Boolean indicating whether to exit, and the reason
         """
-        # Base implementation - no exits
-        return False, None
+        # This is an abstract method that should be overridden by concrete strategies
+        return False, "No exit condition met"
+        
+    def update_metrics(self, portfolio_metrics: Dict[str, Any]) -> None:
+        """
+        Update strategy-specific metrics based on portfolio performance.
+        
+        Args:
+            portfolio_metrics: Portfolio performance metrics
+        """
+        # Store performance metrics
+        self.performance_history.append(portfolio_metrics)
 
 
 class TradingEngine:
     """
-    Trading engine for executing strategies against historical or live data.
+    Core trading engine for backtesting and executing trading strategies.
     
-    This class coordinates all aspects of the trading process,
-    including data management, portfolio management, executing strategy
-    signals, and performance reporting.
+    This class orchestrates the entire trading process, including:
+    - Loading and preprocessing data
+    - Instantiating and configuring the strategy
+    - Managing the portfolio
+    - Calculating risk metrics
+    - Processing daily trading activities
+    - Tracking and reporting performance
     """
-
-    def __init__(self, config: Dict[str, Any], strategy: Strategy,
-                 logger: Optional[logging.Logger] = None):
+    
+    def __init__(self, config_dict: Dict[str, Any], strategy: Optional[Strategy] = None):
         """
         Initialize the trading engine.
-
+        
         Args:
-            config: Configuration dictionary
-            strategy: Strategy instance
-            logger: Logger instance
+            config_dict: Configuration dictionary
+            strategy: Optional strategy instance (if None, will be created from config)
         """
-        self.config = config
-        self.logger = logger or logging.getLogger('trading_engine')
+        # Set up logging first
+        self.logging_manager = LoggingManager()
+        self.logger = self.logging_manager.setup_logging(
+            config_dict,
+            verbose_console=config_dict.get('verbose_console', True),
+            debug_mode=config_dict.get('debug_mode', False)
+        )
+        
+        # Store configuration
+        self.config = config_dict
+        
+        # Initialize other components later
+        self.data_manager = None
+        self.data = None  # Will hold the processed data
+        self.portfolio = None
+        self.hedging_manager = None
+        self.margin_calculator = None
+        self.reporting_system = None
+        
+        # If strategy is provided, use it; otherwise create from config
         self.strategy = strategy
+        if self.strategy is None:
+            self.strategy = self._create_strategy()
+            
+        # Performance metrics
+        self.metrics_history = []
         
-        # Set default values for start_date and end_date
-        self.start_date = None
-        self.end_date = None
+        # Initialize components
+        self._init_components()
         
-        # Load YAML configuration from config folder
-        yaml_config_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'config', 'config.yaml')
+    def _init_components(self) -> None:
+        """Initialize trading engine components."""
+        # Get configuration values
+        initial_capital = self.config.get('initial_capital', 100000)
+        max_position_size = self.config.get('max_position_size', 0.05)
+        max_portfolio_delta = self.config.get('max_portfolio_delta', 0.20)
         
-        # Setup system components
-        self._initialize_components()
-        
-        # Set up debug file if enabled
-        if config.get('debug', {}).get('write_debug_file', False):
-            debug_dir = config.get('debug', {}).get('debug_dir', 'debug')
-            os.makedirs(debug_dir, exist_ok=True)
-            debug_file_path = os.path.join(debug_dir, f"debug_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt")
-            self.debug_file = open(debug_file_path, 'w')
-            self.logger.info(f"Debug output will be written to {debug_file_path}")
-        else:
-            self.debug_file = None
-    
-    def _initialize_components(self):
-        """
-        Initialize all trading engine components.
-        """
-        # Initialize portfolio
-        initial_capital = self.config.get('portfolio', {}).get('initial_capital', 100000.0)
-        max_position_size_pct = self.config.get('portfolio', {}).get('max_position_size_pct', 0.25)
-        max_portfolio_delta = self.config.get('portfolio', {}).get('max_portfolio_delta', 0.20)
+        # Create portfolio
         self.portfolio = Portfolio(
             initial_capital=initial_capital,
-            max_position_size_pct=max_position_size_pct,
+            max_position_size_pct=max_position_size,
             max_portfolio_delta=max_portfolio_delta,
             logger=self.logger
         )
         
-        # Initialize data manager
-        data_config = self.config.get('data', {})
-        self.data_manager = DataManager(data_config, logger=self.logger)
+        # Create margin calculator
+        margin_config = self.config.get('margin', {})
+        margin_type = margin_config.get('type', 'option')
         
-        # Initialize margin calculator
-        margin_type = self.config.get('margin', {}).get('type', 'option')
-        if margin_type.lower() == 'span':
-            max_leverage = self.config.get('margin', {}).get('max_leverage', 1.0)
-            self.margin_calculator = SPANMarginCalculator(max_leverage=max_leverage, logger=self.logger)
-        elif margin_type.lower() == 'option':
-            max_leverage = self.config.get('margin', {}).get('max_leverage', 1.0)
-            otm_margin_multiplier = self.config.get('margin', {}).get('otm_margin_multiplier', 0.8)
-            self.margin_calculator = OptionMarginCalculator(
-                max_leverage=max_leverage,
-                otm_margin_multiplier=otm_margin_multiplier,
+        if margin_type == 'option':
+            self.margin_calculator = OptionMarginCalculator(self.logger)
+        elif margin_type == 'span':
+            self.margin_calculator = SPANMarginCalculator(self.logger)
+        else:
+            self.margin_calculator = MarginCalculator(self.logger)
+            
+        # Create hedging manager if hedging is enabled
+        hedging_config = self.config.get('hedging', {})
+        hedging_enabled = hedging_config.get('enabled', False)
+        
+        if hedging_enabled:
+            self.hedging_manager = HedgingManager(
+                config=hedging_config,
                 logger=self.logger
             )
-        else:
-            # Default to basic margin calculator
-            max_leverage = self.config.get('margin', {}).get('max_leverage', 1.0)
-            self.margin_calculator = MarginCalculator(max_leverage=max_leverage, logger=self.logger)
-            
-        # Initialize hedging manager if enabled
-        hedging_config = self.config.get('hedging', {})
-        if hedging_config.get('enabled', False):
-            self.hedging_manager = HedgingManager(hedging_config, self.portfolio, logger=self.logger)
+            self.logger.info(f"Hedging enabled: mode={hedging_config.get('mode', 'delta_neutral')}")
         else:
             self.hedging_manager = None
+            self.logger.info("Hedging disabled")
             
-        # Initialize reporting system
+        # Create reporting system if reporting is enabled
         reporting_config = self.config.get('reporting', {})
-        if reporting_config.get('enabled', True):
+        reporting_enabled = reporting_config.get('enabled', True)
+        
+        if reporting_enabled:
             self.reporting_system = ReportingSystem(
-                reporting_config, 
-                self.portfolio,
+                config=reporting_config,
                 logger=self.logger
             )
         else:
             self.reporting_system = None
-    
-    def write_debug_output(self, text: str) -> None:
-        """
-        Write debug information to the debug file.
+            
+        # Create data manager
+        data_config = self.config.get('data', {})
+        data_sources = data_config.get('sources', [])
         
-        Args:
-            text: Text to write to the debug file
+        if not data_sources:
+            self.logger.warning("No data sources specified in configuration")
+            
+        self.data_manager = DataManager(
+            config=data_config,
+            logger=self.logger
+        )
+        
+    def _create_strategy(self) -> Strategy:
         """
-        # Skip if debug file is not set up
-        if self.debug_file is None:
+        Create and configure a strategy based on config.
+        
+        Returns:
+            Strategy: Configured strategy instance
+        """
+        strategy_config = self.config.get('strategy', {})
+        strategy_name = strategy_config.get('name', 'DefaultStrategy')
+        strategy_type = strategy_config.get('type', 'DefaultStrategy')
+        
+        # Placeholder - in a real implementation, would dynamically load the strategy class
+        # For now, just return a base Strategy instance
+        return Strategy(name=strategy_name, config=strategy_config, logger=self.logger)
+        
+    def load_data(self) -> None:
+        """Load and preprocess data for trading."""
+        if self.data_manager is None:
+            self.logger.error("Data manager not initialized")
             return
-        
-        # Make sure logger is initialized
-        logger = getattr(self, 'logger', None)
             
-        try:
-            self.debug_file.write(text)
-            self.debug_file.flush()
-        except Exception as e:
-            if logger:
-                logger.error(f"Failed to write to debug file: {e}")
-            else:
-                print(f"Failed to write to debug file: {e}")
-    
-    def calculate_rolling_metrics(self) -> Dict[str, Any]:
-        """
-        Calculate performance metrics based on portfolio return history.
+        # Load data
+        self.logger.info("Loading data...")
+        data = self.data_manager.load_data()
         
-        Uses expanding window initially (minimum 5 data points), then switches
-        to rolling windows once enough data is available.
-        
-        Returns:
-            dict: Dictionary of metrics including Sharpe ratio and volatility
-        """
-        # Minimum data points needed for initial calculations
-        MIN_DATA_POINTS = 5
-        
-        # Check if we have enough daily returns for initial calculation
-        if not hasattr(self.portfolio, 'daily_returns') or len(self.portfolio.daily_returns) < MIN_DATA_POINTS:
-            # Not enough data points yet
-            self.logger.info(f"No metrics available yet - need at least {MIN_DATA_POINTS} trading days")
-            return {
-                'sharpe': 0,
-                'volatility': 0,
-                'mean_return': 0,
-                'drawdown': 0,
-                'window_type': 'none',
-                'data_points': len(self.portfolio.daily_returns) if hasattr(self.portfolio, 'daily_returns') else 0
-            }
+        if data is None or len(data) == 0:
+            self.logger.error("No data loaded")
+            return
             
-        # Extract return series
-        returns = [entry.get('return', 0) for entry in self.portfolio.daily_returns]
-        returns_series = pd.Series(returns)
-        data_points = len(returns)
+        # Preprocess data
+        self.logger.info("Preprocessing data...")
+        self.data = self.data_manager.preprocess_data(data)
         
-        # Get window sizes from config if available
-        risk_config = self.config.get('risk', {})
-        short_window = risk_config.get('short_window', 21)
-        medium_window = risk_config.get('medium_window', 63)
-        long_window = risk_config.get('long_window', 95)
+        self.logger.info(f"Data loaded: {len(self.data)} rows, {self.data.columns.tolist()}")
         
-        # Calculate expanding and rolling statistics
-        metrics = {}
-        
-        # Expanding window (all data)
-        mean_return = returns_series.mean() * 252  # Annualize
-        volatility = returns_series.std() * np.sqrt(252)  # Annualize
-        sharpe = mean_return / volatility if volatility > 0 else 0
-        
-        # Calculate max drawdown
-        cumulative = (1 + returns_series).cumprod()
-        running_max = cumulative.cummax()
-        drawdown = (cumulative - running_max) / running_max
-        max_drawdown = abs(drawdown.min()) if not drawdown.empty else 0
-        
-        # Store main metrics
-        metrics['sharpe'] = sharpe
-        metrics['volatility'] = volatility
-        metrics['mean_return'] = mean_return
-        metrics['drawdown'] = max_drawdown
-        metrics['data_points'] = data_points
-        
-        # Store whether we're using expanding or rolling windows
-        metrics['window_type'] = 'expanding' if data_points < short_window else 'rolling'
-        
-        # Calculate metrics for different windows
-        windows = {}
-        
-        # SHORT WINDOW METRICS
-        # If we have at least MIN_DATA_POINTS but less than short_window, use expanding window
-        if MIN_DATA_POINTS <= data_points < short_window:
-            # Use expanding window (all available data)
-            windows['short'] = {
-                'window': data_points,  # Expanding window size
-                'window_type': 'expanding',
-                'sharpe': sharpe,       # Use metrics from all available data
-                'volatility': volatility,
-                'mean_return': mean_return
-            }
-        # If we have enough data for a proper short window, use it
-        elif data_points >= short_window:
-            # Use actual short window
-            short_data = returns_series.iloc[-short_window:]
-            short_mean = short_data.mean() * 252
-            short_vol = short_data.std() * np.sqrt(252)
-            short_sharpe = short_mean / short_vol if short_vol > 0 else 0
-            
-            windows['short'] = {
-                'window': short_window,
-                'window_type': 'rolling',
-                'sharpe': short_sharpe,
-                'volatility': short_vol,
-                'mean_return': short_mean
-            }
-        
-        # MEDIUM WINDOW METRICS
-        # If we have more than MIN_DATA_POINTS but less than medium_window, use expanding window
-        if MIN_DATA_POINTS <= data_points < medium_window:
-            # Use expanding window, same as overall metrics
-            windows['medium'] = {
-                'window': data_points,
-                'window_type': 'expanding',
-                'sharpe': sharpe,
-                'volatility': volatility,
-                'mean_return': mean_return
-            }
-        # If we have enough data for medium window, use it
-        elif data_points >= medium_window:
-            # Use actual medium window
-            medium_data = returns_series.iloc[-medium_window:]
-            medium_mean = medium_data.mean() * 252
-            medium_vol = medium_data.std() * np.sqrt(252)
-            medium_sharpe = medium_mean / medium_vol if medium_vol > 0 else 0
-            
-            windows['medium'] = {
-                'window': medium_window,
-                'window_type': 'rolling',
-                'sharpe': medium_sharpe,
-                'volatility': medium_vol,
-                'mean_return': medium_mean
-            }
-        
-        # LONG WINDOW METRICS
-        # If we have more than MIN_DATA_POINTS but less than long_window, use expanding window
-        if MIN_DATA_POINTS <= data_points < long_window:
-            # Use expanding window, same as overall metrics
-            windows['long'] = {
-                'window': data_points,
-                'window_type': 'expanding',
-                'sharpe': sharpe,
-                'volatility': volatility,
-                'mean_return': mean_return
-            }
-        # If we have enough data for long window, use it
-        elif data_points >= long_window:
-            # Use actual long window
-            long_data = returns_series.iloc[-long_window:]
-            long_mean = long_data.mean() * 252
-            long_vol = long_data.std() * np.sqrt(252)
-            long_sharpe = long_mean / long_vol if long_vol > 0 else 0
-            
-            windows['long'] = {
-                'window': long_window,
-                'window_type': 'rolling',
-                'sharpe': long_sharpe,
-                'volatility': long_vol,
-                'mean_return': long_mean
-            }
-        
-        # Add windows to metrics
-        metrics['windows'] = windows
-        
-        # Calculate historical mean and std of the Sharpe ratio
-        # Minimum history required for z-score calculations
-        MIN_HIST_POINTS = 10
-        
-        # Calculate historical stats based on available data
-        if len(returns) >= MIN_HIST_POINTS:
-            # Target history window size - use expanding window at first
-            hist_window = max(MIN_HIST_POINTS, min(len(returns) // 2, 30))  # Cap at 30 days
-            
-            # Check if we have enough data for rolling window or need expanding window
-            if len(returns) < hist_window + MIN_HIST_POINTS:
-                # Not enough data for proper rolling window - use expanding window
-                # Calculate simple historical stats using all data
-                hist_mean = sharpe  # Use overall Sharpe as the historical mean
-                hist_std = volatility / 4  # Estimate std dev based on volatility
-                metrics['hist_window_type'] = 'expanding'
-                metrics['hist_window'] = len(returns)
-            else:
-                # Enough data for rolling window
-                # Calculate rolling Sharpe ratio series
-                rolling_mean = returns_series.rolling(hist_window).mean() * 252
-                rolling_std = returns_series.rolling(hist_window).std() * np.sqrt(252)
-                rolling_sharpe = rolling_mean / rolling_std
-                rolling_sharpe = rolling_sharpe.dropna()
-                
-                # Calculate historical stats
-                hist_mean = rolling_sharpe.mean()
-                hist_std = rolling_sharpe.std()
-                metrics['hist_window_type'] = 'rolling'
-                metrics['hist_window'] = hist_window
-            
-            # Calculate z-score for current Sharpe
-            if hist_std > 0 and not pd.isna(hist_mean) and not pd.isna(sharpe):
-                z_score = (sharpe - hist_mean) / hist_std
-            else:
-                z_score = 0
-                
-            # Add to metrics
-            metrics['hist_mean'] = hist_mean
-            metrics['hist_std'] = hist_std
-            metrics['z_score'] = z_score
-        
-        return metrics
-        
-    def load_data(self) -> bool:
-        """
-        Load all required data for the backtesting process.
-        
-        This method loads option data, market data, and any other data needed for the backtest.
-        
-        Returns:
-            bool: True if data loading was successful, False otherwise
-        """
-        self.logger.info("[STATUS] Loading data...")
-        
-        # Get the input file path from the configuration
-        paths_config = self.config.get('paths', {})
-        input_file = paths_config.get('input_file')
-        
-        if not input_file:
-            self.logger.error("No input file specified in configuration")
-            return False
-            
-        # Handle date range from config
-        dates_config = self.config.get('dates', {})
-        start_date_str = dates_config.get('start_date')
-        end_date_str = dates_config.get('end_date')
-        
-        # Parse dates if provided
-        self.start_date = datetime.strptime(start_date_str, '%Y-%m-%d') if start_date_str else None
-        self.end_date = datetime.strptime(end_date_str, '%Y-%m-%d') if end_date_str else None
-        
-        # Log date range and input file
-        self.logger.info(f"Input file: {input_file}")
-        if self.start_date and self.end_date:
-            self.logger.info(f"Date range: {self.start_date.strftime('%Y-%m-%d')} to {self.end_date.strftime('%Y-%m-%d')}")
-        
-        # Load option data
-        try:
-            # Load data using the data manager
-            self.logger.info("[STATUS] Calculating mid prices...")
-            self.data = self.data_manager.load_option_data(input_file, self.start_date, self.end_date)
-            
-            if self.data is None or len(self.data) == 0:
-                self.logger.error(f"Failed to load data from {input_file}")
-                return False
-                
-            # Parse trading dates
-            self.trading_dates = sorted(self.data['DataDate'].unique())
-            
-            if not self.trading_dates:
-                self.logger.error("No trading dates found in data")
-                return False
-                
-            # Update date range if not specified
-            if not self.start_date:
-                self.start_date = self.trading_dates[0]
-            if not self.end_date:
-                self.end_date = self.trading_dates[-1]
-                
-            self.logger.info(f"Successfully loaded data: {len(self.data)} rows, {len(self.trading_dates)} trading days")
-            return True
-            
-        except Exception as e:
-            self.logger.error(f"Error loading data: {e}")
-            self.logger.error(traceback.format_exc())
-            return False
-            
     def run_backtest(self) -> Dict[str, Any]:
         """
-        Run a backtest using the loaded data and configured strategy.
-        
-        This method iterates through trading dates, generates signals,
-        and executes trades according to the strategy.
+        Run a backtest using the configured strategy.
         
         Returns:
-            dict: Dictionary of backtest results and performance metrics
+            dict: Backtest results
         """
-        if not hasattr(self, 'data') or self.data is None or len(self.data) == 0:
+        # Check if data is loaded
+        if self.data is None or len(self.data) == 0:
             self.logger.error("No data loaded for backtest")
             return {"error": "No data loaded"}
             
-        if not hasattr(self, 'trading_dates') or not self.trading_dates:
-            self.logger.error("No trading dates available")
-            return {"error": "No trading dates available"}
+        # Check for required date column
+        if 'DataDate' not in self.data.columns:
+            self.logger.error("Data missing required 'DataDate' column")
+            return {"error": "Missing date column"}
             
-        self.logger.info("[STATUS] Initializing trading engine...")
-        self.logger.info(f"Strategy: {self.strategy.name}")
+        self.logger.info(f"Starting backtest with strategy: {self.strategy.name}")
         self.logger.info(f"Initial capital: ${self.portfolio.initial_capital:,.2f}")
         
-        # Tracking variables
-        processed_days = 0
-        total_days = len(self.trading_dates)
-        
         try:
+            # Get unique dates for processing
+            self.data['DataDate'] = pd.to_datetime(self.data['DataDate'])
+            unique_dates = self.data['DataDate'].dt.date.unique()
+            unique_dates.sort()
+            
+            total_days = len(unique_dates)
+            self.logger.info(f"Backtest period: {unique_dates[0]} to {unique_dates[-1]} ({total_days} trading days)")
+            
             # Process each trading day
-            self.logger.info("[STATUS] Running strategy simulation...")
-            for current_date in self.trading_dates:
-                # Skip dates outside our range
-                if (self.start_date and current_date < self.start_date) or \
-                   (self.end_date and current_date > self.end_date):
-                    continue
-                    
-                # Log progress
+            processed_days = 0
+            for date in unique_dates:
+                # Convert date to datetime for filtering
+                current_date = pd.to_datetime(date)
+                
+                # Log progress periodically
                 processed_days += 1
                 if processed_days % 1 == 0 or processed_days == total_days:
                     progress_pct = processed_days / total_days * 100
@@ -746,14 +599,252 @@ class TradingEngine:
             self.logger.error(traceback.format_exc())
             return {"error": str(e)}
             
+    def _log_pre_trade_summary(self, current_date: datetime, daily_data: pd.DataFrame) -> None:
+        """
+        Log pre-trade portfolio summary after marking-to-market.
+        
+        Args:
+            current_date: Current trading date
+            daily_data: Daily market data
+        """
+        if not self.portfolio.positions:
+            return
+            
+        portfolio_metrics = self.portfolio.get_portfolio_metrics()
+        greeks = self.portfolio.get_portfolio_greeks()
+        
+        # Log "PRE-TRADE Summary" header with date
+        self.logger.info("==================================================")
+        self.logger.info(f"PRE-TRADE Summary [{current_date.strftime('%Y-%m-%d')}]:")
+        
+        # Calculate daily return
+        if hasattr(self.portfolio, 'daily_returns') and self.portfolio.daily_returns:
+            latest_return = self.portfolio.daily_returns[-1]
+            daily_pnl = latest_return.get('pnl', 0)
+            daily_return_pct = latest_return.get('return', 0)
+            self.logger.info(f"Daily P&L: ${daily_pnl:.0f} ({daily_return_pct:.2%})")
+            
+            # Log option and hedge PnL
+            option_pnl = latest_return.get('unrealized_pnl_change', 0)
+            hedge_pnl = latest_return.get('realized_pnl', 0)  # Using realized_pnl as hedge_pnl
+            self.logger.info(f"  Option PnL: ${option_pnl:.0f}")
+            self.logger.info(f"  Hedge PnL: ${hedge_pnl:.0f}")
+        
+        # Portfolio position info
+        self.logger.info(f"Open Trades: {len(self.portfolio.positions)}")
+        
+        # Calculate exposure
+        exposure_pct = portfolio_metrics['position_value'] / portfolio_metrics['portfolio_value'] if portfolio_metrics['portfolio_value'] > 0 else 0
+        self.logger.info(f"Total Position Exposure: {exposure_pct:.1%} of NLV")
+        self.logger.info(f"Net Liq: ${portfolio_metrics['portfolio_value']:.0f}")
+        self.logger.info(f"  Cash Balance: ${portfolio_metrics['cash_balance']:.0f}")
+        self.logger.info(f"  Total Liability: ${-portfolio_metrics['position_value']:.0f}")
+        
+        # Add hedge info if available
+        if hasattr(self, 'hedging_manager') and self.hedging_manager:
+            hedge_pnl = latest_return.get('realized_pnl', 0)  # Using realized_pnl as hedge_pnl
+            self.logger.info(f"  Self Hedge (Hedge PnL): ${hedge_pnl:.0f}")
+        
+        # Margin info
+        self.logger.info(f"Total Margin Requirement: ${portfolio_metrics['total_margin']:.0f}")
+        self.logger.info(f"Available Margin: ${portfolio_metrics['available_margin']:.0f}")
+        self.logger.info(f"Margin-Based Leverage: {portfolio_metrics['current_leverage']:.2f}")
+        
+        # Portfolio Greeks section
+        self.logger.info("\nPortfolio Greek Risk:")
+        
+        # Option delta
+        self.logger.info(f"  Option Delta: {greeks['delta']:.3f} (${greeks['dollar_delta']:.2f})")
+        
+        # Hedge delta if available
+        if hasattr(self, 'hedging_manager') and self.hedging_manager:
+            hedge_delta = self.hedging_manager.current_hedge_delta if hasattr(self.hedging_manager, 'current_hedge_delta') else 0
+            hedge_dollar_delta = self.hedging_manager.current_dollar_delta if hasattr(self.hedging_manager, 'current_dollar_delta') else 0
+            self.logger.info(f"  Hedge Delta: {hedge_delta:.3f} (${hedge_dollar_delta:.2f})")
+            
+            # Total delta (options + hedge)
+            total_delta = greeks['delta'] + hedge_delta
+            total_dollar_delta = greeks['dollar_delta'] + hedge_dollar_delta
+            self.logger.info(f"  Total Delta: {total_delta:.3f} (${total_dollar_delta:.2f})")
+        
+        # Other Greeks
+        self.logger.info(f"  Gamma: {greeks['gamma']:.6f} (${greeks['dollar_gamma']:.2f} per 1% move)")
+        self.logger.info(f"  Theta: ${greeks['dollar_theta']:.2f} per day")
+        self.logger.info(f"  Vega: ${greeks['dollar_vega']:.2f} per 1% IV")
+        
+        # Open trades table
+        self.logger.info("--------------------------------------------------")
+        self.logger.info("\nOpen Trades Table:")
+        self.logger.info("-" * 120)
+        self.logger.info(f"{'Symbol':<20}{'Contracts':>10}{'Entry':>8}{'Current':>10}{'Value':>10}{'NLV%':>8}{'Underlying':>10}{'Delta':>10}{'DTE':>5}")
+        self.logger.info("-" * 120)
+        
+        portfolio_value = portfolio_metrics['portfolio_value']
+        for symbol, position in self.portfolio.positions.items():
+            # Calculate position metrics
+            is_option = isinstance(position, OptionPosition)
+            pos_value = position.current_price * position.contracts * (100 if is_option else 1)
+            pos_pct = pos_value / portfolio_value if portfolio_value > 0 else 0
+            
+            # Format the position info line
+            self.logger.info(f"{symbol:<20}{position.contracts:>10d}${position.avg_entry_price:>6.2f}${position.current_price:>8.2f}${pos_value:>9.0f}{pos_pct:>7.1%}${position.underlying_price:>8.2f}{position.current_delta:>10.3f}{position.days_to_expiry if hasattr(position, 'days_to_expiry') else 0:>5d}")
+        
+        # Print table footer
+        self.logger.info("-" * 120)
+        self.logger.info(f"TOTAL{' ':>30}${self.portfolio.position_value:>9.0f}{exposure_pct:>7.1%}")
+        self.logger.info("-" * 120)
+        self.logger.info("==================================================")
+        
+    def _execute_trading_activities(self, current_date: datetime, daily_data: pd.DataFrame) -> None:
+        """
+        Execute all trading activities for the day including position management and signal execution.
+        
+        Args:
+            current_date: Current trading date
+            daily_data: Daily market data
+        """
+        # Log start of trading activities
+        self.logger.info(f"[TradeManager] Processing trading activities for {current_date.strftime('%Y-%m-%d')}")
+        
+        # Check debug flags
+        if hasattr(self, 'hedging_manager') and self.hedging_manager:
+            self.logger.info(f"[DEBUG] CPD Hedging enabled: {self.hedging_manager.enabled}")
+            self.logger.info(f"[DEBUG] Hedge mode: {self.hedging_manager.hedge_mode}")
+            if hasattr(self.hedging_manager, 'target_delta_ratio'):
+                self.logger.info(f"[DEBUG] Target Dollar Delta/NLV Ratio: {self.hedging_manager.target_delta_ratio:.4f}")
+        
+        # Manage existing positions (check exit conditions)
+        # This includes checking for profit targets, stop losses, etc.
+        self._manage_positions(current_date, daily_data)
+        
+        # Generate trading signals from strategy
+        signals = self.strategy.generate_signals(current_date, daily_data)
+        
+        # Execute trading signals if any were generated
+        if signals:
+            self._execute_signals(signals, daily_data, current_date)
+            
+        # Calculate and store rolling performance metrics
+        metrics = self.calculate_rolling_metrics()
+        
+        # Log risk scaling information if metrics are available
+        if metrics and 'sharpe_ratio' in metrics:
+            self.logger.info(f"[Risk Scaling] Current Sharpe: {metrics.get('sharpe_ratio', 0):.2f}, Hist Mean: {metrics.get('mean_sharpe', 0):.2f}, z: {metrics.get('z_score', 0):.2f} => Scaling: {metrics.get('scaling_factor', 1.0):.2f}")
+            scaling_factor = metrics.get('scaling_factor', 1.0)
+            self.logger.info(f"  [Risk Scaling] {'High' if scaling_factor >= 0.8 else 'Low'} scaling factor ({scaling_factor:.2f}) - {'normal' if scaling_factor >= 0.8 else 'reduced'} position sizing")
+            
+    def _log_post_trade_summary(self, current_date: datetime) -> None:
+        """
+        Log post-trade portfolio summary after all trading activities.
+        
+        Args:
+            current_date: Current trading date
+        """
+        if not self.portfolio.positions:
+            return
+            
+        portfolio_metrics = self.portfolio.get_portfolio_metrics()
+        greeks = self.portfolio.get_portfolio_greeks()
+        
+        # Log "POST-TRADE Summary" header with date
+        self.logger.info("==================================================")
+        self.logger.info(f"POST-TRADE Summary [{current_date.strftime('%Y-%m-%d')}]:")
+        
+        # Calculate daily return
+        if hasattr(self.portfolio, 'daily_returns') and self.portfolio.daily_returns:
+            latest_return = self.portfolio.daily_returns[-1]
+            daily_pnl = latest_return.get('pnl', 0)
+            daily_return_pct = latest_return.get('return', 0)
+            self.logger.info(f"Daily P&L: ${daily_pnl:.0f} ({daily_return_pct:.2%})")
+            
+            # Log option and hedge PnL
+            option_pnl = latest_return.get('unrealized_pnl_change', 0)
+            hedge_pnl = latest_return.get('realized_pnl', 0)
+            self.logger.info(f"  Option PnL: ${option_pnl:.0f}")
+            self.logger.info(f"  Hedge PnL: ${hedge_pnl:.0f}")
+        
+        # Portfolio position info
+        self.logger.info(f"Open Trades: {len(self.portfolio.positions)}")
+        
+        # Calculate exposure
+        exposure_pct = portfolio_metrics['position_value'] / portfolio_metrics['portfolio_value'] if portfolio_metrics['portfolio_value'] > 0 else 0
+        self.logger.info(f"Total Position Exposure: {exposure_pct:.1%} of NLV")
+        self.logger.info(f"Net Liq: ${portfolio_metrics['portfolio_value']:.0f}")
+        self.logger.info(f"  Cash Balance: ${portfolio_metrics['cash_balance']:.0f}")
+        self.logger.info(f"  Total Liability: ${-portfolio_metrics['position_value']:.0f}")
+        
+        # Add hedge info if available
+        if hasattr(self, 'hedging_manager') and self.hedging_manager:
+            hedge_pnl = latest_return.get('realized_pnl', 0)
+            self.logger.info(f"  Self Hedge (Hedge PnL): ${hedge_pnl:.0f}")
+        
+        # Margin info
+        self.logger.info(f"Total Margin Requirement: ${portfolio_metrics['total_margin']:.0f}")
+        self.logger.info(f"Available Margin: ${portfolio_metrics['available_margin']:.0f}")
+        self.logger.info(f"Margin-Based Leverage: {portfolio_metrics['current_leverage']:.2f}")
+        
+        # Portfolio Greeks section
+        self.logger.info("\nPortfolio Greek Risk:")
+        
+        # Option delta
+        self.logger.info(f"  Option Delta: {greeks['delta']:.3f} (${greeks['dollar_delta']:.2f})")
+        
+        # Hedge delta if available
+        if hasattr(self, 'hedging_manager') and self.hedging_manager:
+            hedge_delta = self.hedging_manager.current_hedge_delta if hasattr(self.hedging_manager, 'current_hedge_delta') else 0
+            hedge_dollar_delta = self.hedging_manager.current_dollar_delta if hasattr(self.hedging_manager, 'current_dollar_delta') else 0
+            self.logger.info(f"  Hedge Delta: {hedge_delta:.3f} (${hedge_dollar_delta:.2f})")
+            
+            # Total delta (options + hedge)
+            total_delta = greeks['delta'] + hedge_delta
+            total_dollar_delta = greeks['dollar_delta'] + hedge_dollar_delta
+            self.logger.info(f"  Total Delta: {total_delta:.3f} (${total_dollar_delta:.2f})")
+        
+        # Other Greeks
+        self.logger.info(f"  Gamma: {greeks['gamma']:.6f} (${greeks['dollar_gamma']:.2f} per 1% move)")
+        self.logger.info(f"  Theta: ${greeks['dollar_theta']:.2f} per day")
+        self.logger.info(f"  Vega: ${greeks['dollar_vega']:.2f} per 1% IV")
+        
+        # Performance metrics if we have enough history
+        if hasattr(self.portfolio, 'daily_returns') and len(self.portfolio.daily_returns) >= 5:
+            perf = self.portfolio.get_performance_metrics()
+            self.logger.info("\nRolling Metrics:")
+            self.logger.info(f"  Sharpe: {perf['sharpe_ratio']:.2f}, Volatility: {perf['volatility']:.2%}")
+        
+        # Open trades table
+        self.logger.info("--------------------------------------------------")
+        self.logger.info("\nOpen Trades Table:")
+        self.logger.info("-" * 120)
+        self.logger.info(f"{'Symbol':<20}{'Contracts':>10}{'Entry':>8}{'Current':>10}{'Value':>10}{'NLV%':>8}{'Underlying':>10}{'Delta':>10}{'DTE':>5}")
+        self.logger.info("-" * 120)
+        
+        portfolio_value = portfolio_metrics['portfolio_value']
+        for symbol, position in self.portfolio.positions.items():
+            # Calculate position metrics
+            is_option = isinstance(position, OptionPosition)
+            pos_value = position.current_price * position.contracts * (100 if is_option else 1)
+            pos_pct = pos_value / portfolio_value if portfolio_value > 0 else 0
+            
+            # Format the position info line
+            self.logger.info(f"{symbol:<20}{position.contracts:>10d}${position.avg_entry_price:>6.2f}${position.current_price:>8.2f}${pos_value:>9.0f}{pos_pct:>7.1%}${position.underlying_price:>8.2f}{position.current_delta:>10.3f}{position.days_to_expiry if hasattr(position, 'days_to_expiry') else 0:>5d}")
+        
+        # Print table footer
+        self.logger.info("-" * 120)
+        self.logger.info(f"TOTAL{' ':>30}${self.portfolio.position_value:>9.0f}{exposure_pct:>7.1%}")
+        self.logger.info("-" * 120)
+        self.logger.info("==================================================")
+        
+        # Log completion of day processing
+        self.logger.info(f"[TradeManager] Completed processing for {current_date.strftime('%Y-%m-%d')}")
+    
     def _process_trading_day(self, current_date: datetime) -> None:
         """
         Process a single trading day in the backtest.
         
         Args:
-            current_date: The current trading date
+            current_date: Current trading date
         """
-        self.logger.debug(f"Processing {current_date.strftime('%Y-%m-%d')}")
+        self.logger.info(f"[TradeManager] Processing day: {current_date.strftime('%Y-%m-%d')}")
         
         # Get data for the current day
         daily_data = self.data[self.data['DataDate'] == current_date]
@@ -762,21 +853,15 @@ class TradingEngine:
             self.logger.warning(f"No data available for {current_date.strftime('%Y-%m-%d')}")
             return
             
-        # Update existing positions with current market data
+        # Phase 1: PRE-TRADE - Update positions with market data and log pre-trade summary
         self._update_positions(current_date, daily_data)
+        self._log_pre_trade_summary(current_date, daily_data)
         
-        # Manage existing positions (check exit conditions)
-        self._manage_positions(current_date, daily_data)
+        # Phase 2: TRADING ACTIVITIES - Manage positions, execute signals, calculate metrics
+        self._execute_trading_activities(current_date, daily_data)
         
-        # Generate trading signals
-        signals = self.strategy.generate_signals(current_date, daily_data)
-        
-        # Execute trading signals
-        if signals:
-            self._execute_signals(signals, daily_data, current_date)
-            
-        # Calculate and store rolling performance metrics
-        self.calculate_rolling_metrics()
+        # Phase 3: POST-TRADE - Log post-trade summary
+        self._log_post_trade_summary(current_date)
             
     def _update_positions(self, current_date: datetime, daily_data: pd.DataFrame) -> None:
         """
@@ -799,9 +884,22 @@ class TradingEngine:
             for _, row in daily_data.iterrows():
                 symbol = row['OptionSymbol']
                 market_data_by_symbol[symbol] = row.to_dict()
-                
+        
+        # Store pre-update position values for logging
+        pre_update_values = {}
+        for symbol, position in self.portfolio.positions.items():
+            pre_update_values[symbol] = position.current_price * position.contracts * 100 if isinstance(position, OptionPosition) else position.current_price * position.contracts
+        
         # Update portfolio positions
         self.portfolio.update_market_data(market_data_by_symbol, current_date)
+            
+        # Log position updates
+        for symbol, position in self.portfolio.positions.items():
+            if symbol in market_data_by_symbol:
+                new_value = position.current_price * position.contracts * 100 if isinstance(position, OptionPosition) else position.current_price * position.contracts
+                change = new_value - pre_update_values.get(symbol, 0)
+                
+                self.logger.info(f"[Position Update] {symbol}: ${new_value:.2f} (change: ${change:.2f})")
             
     def _manage_positions(self, current_date: datetime, daily_data: pd.DataFrame) -> None:
         """
@@ -847,90 +945,114 @@ class TradingEngine:
                 if symbol in market_data_by_symbol:
                     price = market_data_by_symbol[symbol].get('MidPrice')
                     
-                # Add execution data
-                execution_data = {'date': current_date}
-                
                 # Close position
-                self.portfolio.remove_position(symbol, price=price, execution_data=execution_data, reason=reason)
+                position = self.portfolio.positions[symbol]
+                quantity = position.contracts
+                
+                pnl = self.portfolio.remove_position(
+                    symbol=symbol,
+                    price=price,
+                    reason=reason
+                )
+                
+                # Log detailed info about the closed position
+                self.logger.info(f"[TradeManager] Closed position {symbol}: {reason}")
+                self.logger.info(f"  Contracts: {quantity}")
+                self.logger.info(f"  P&L: ${pnl:.2f}")
                 
     def _execute_signals(self, signals: List[Dict[str, Any]], daily_data: pd.DataFrame, current_date: datetime) -> None:
         """
-        Execute trading signals by adding or removing positions.
+        Execute trading signals.
         
         Args:
-            signals: List of signal dictionaries
+            signals: List of trading signals to execute
             daily_data: Data for the current trading day
             current_date: Current trading date
         """
-        if not signals:
-            return
-            
-        self.logger.debug(f"Executing {len(signals)} trading signals")
+        # Log that we're executing signals
+        self.logger.info("[TradeManager] Executing trading signals")
         
-        # Create a lookup for option data
-        option_data_by_symbol = {}
-        if 'OptionSymbol' in daily_data.columns:
-            for _, row in daily_data.iterrows():
-                symbol = row['OptionSymbol']
-                option_data_by_symbol[symbol] = row
-                
         # Process each signal
         for signal in signals:
-            action = signal.get('action', '').upper()
+            action = signal.get('action')
             symbol = signal.get('symbol')
-            quantity = signal.get('quantity', 1)
             
-            # Skip invalid signals
-            if not symbol or not action:
-                self.logger.warning(f"Invalid signal: {signal}")
-                continue
+            # For open positions
+            if action == 'open':
+                # Get the required data for opening a position
+                quantity = signal.get('quantity', 1)
+                price = signal.get('price')
+                position_type = signal.get('type', 'option')
+                is_short = signal.get('is_short', True)
                 
-            # Skip if we don't have data for this symbol
-            if symbol not in option_data_by_symbol:
-                self.logger.warning(f"No data for signal symbol: {symbol}")
-                continue
+                # Log the signal
+                self.logger.info(f"[TradeManager] Opening {quantity} {'short' if is_short else 'long'} {position_type} {symbol}")
                 
-            # Get option data
-            option_data = option_data_by_symbol[symbol]
+                # Build execution data
+                execution_data = {'date': current_date}
+                if 'execution_data' in signal:
+                    execution_data.update(signal['execution_data'])
+                    
+                # Get instrument data
+                instrument_data = None
+                if 'instrument_data' in signal:
+                    instrument_data = signal['instrument_data']
+                else:
+                    # Look up in daily data
+                    for _, row in daily_data.iterrows():
+                        if 'OptionSymbol' in row and row['OptionSymbol'] == symbol:
+                            instrument_data = row.to_dict()
+                            break
+                            
+                # Execute the open position
+                if instrument_data:
+                    # Add position
+                    position = self.portfolio.add_position(
+                        symbol=symbol,
+                        instrument_data=instrument_data,
+                        quantity=quantity,
+                        price=price,
+                        position_type=position_type,
+                        is_short=is_short,
+                        execution_data=execution_data
+                    )
+                    
+                    # Enhanced logging
+                    if position:
+                        position_value = price * quantity * 100 if position_type == 'option' else price * quantity
+                        self.logger.info(f"[TradeManager] Added {quantity} contracts of {symbol}")
+                        self.logger.info(f"  Position value: ${position_value:.2f}")
+                else:
+                    self.logger.warning(f"Cannot open position {symbol}: No instrument data available")
             
-            # Get price from signal or use mid price
-            price = signal.get('price')
-            if price is None and 'MidPrice' in option_data:
-                price = option_data['MidPrice']
+            # For close positions
+            elif action == 'close':
+                # Get the required data for closing a position
+                quantity = signal.get('quantity')  # None means close all
+                price = signal.get('price')
+                reason = signal.get('reason', 'Signal')
                 
-            # Skip if no price available
-            if price is None or price <= 0:
-                self.logger.warning(f"No valid price for {symbol}")
-                continue
+                # Log the signal
+                self.logger.info(f"[TradeManager] Closing {quantity if quantity else 'all'} {symbol}: {reason}")
                 
-            # Execute the signal
-            execution_data = {'date': current_date}
-            
-            if action in ('BUY', 'SELL'):
-                # Determine if this is a short position
-                is_short = action == 'SELL'
-                
-                # Add a new position
-                self.portfolio.add_position(
-                    symbol=symbol,
-                    instrument_data=option_data,
-                    quantity=quantity,
-                    price=price,
-                    position_type='option',
-                    is_short=is_short,
-                    execution_data=execution_data
-                )
-                
-            elif action == 'CLOSE':
-                # Close an existing position
+                # Build execution data
+                execution_data = {'date': current_date}
+                if 'execution_data' in signal:
+                    execution_data.update(signal['execution_data'])
+                    
+                # Check if we have the position
                 if symbol in self.portfolio.positions:
-                    self.portfolio.remove_position(
+                    # Close position
+                    pnl = self.portfolio.remove_position(
                         symbol=symbol,
                         quantity=quantity,
                         price=price,
                         execution_data=execution_data,
-                        reason=signal.get('reason', 'Signal')
+                        reason=reason
                     )
+                    
+                    # Enhanced logging for PnL
+                    self.logger.info(f"[TradeManager] Closed position - P&L: ${pnl:.2f}")
                 else:
                     self.logger.warning(f"Cannot close position {symbol} - not found in portfolio")
                     
@@ -942,3 +1064,88 @@ class TradingEngine:
         self.logger.debug(f"Portfolio after signals: ${portfolio_metrics['portfolio_value']:,.2f}, {len(self.portfolio.positions)} positions")
         self.logger.debug(f"  Cash balance: ${portfolio_metrics['cash_balance']:,.2f}")
         self.logger.debug(f"  Delta: {portfolio_metrics['delta']:.2f} (${portfolio_metrics['dollar_delta']:,.2f})")
+        
+    def calculate_rolling_metrics(self) -> Dict[str, float]:
+        """
+        Calculate and store rolling performance metrics.
+        
+        Returns:
+            dict: Dictionary of performance metrics
+        """
+        # Check if we have enough history
+        if not hasattr(self.portfolio, 'daily_returns') or len(self.portfolio.daily_returns) < 5:
+            return {}
+            
+        # Calculate base metrics
+        perf_metrics = self.portfolio.get_performance_metrics()
+        
+        # Extract Sharpe ratio
+        current_sharpe = perf_metrics.get('sharpe_ratio', 0)
+        
+        # Store in history
+        if len(self.metrics_history) >= 252:  # One year of trading days
+            self.metrics_history.pop(0)  # Remove oldest entry
+            
+        self.metrics_history.append({
+            'date': self.portfolio.daily_returns[-1]['date'],
+            'sharpe_ratio': current_sharpe,
+            'volatility': perf_metrics.get('volatility', 0),
+            'return': perf_metrics.get('return', 0)
+        })
+        
+        # Calculate mean and standard deviation of Sharpe ratio
+        sharpe_values = [m.get('sharpe_ratio', 0) for m in self.metrics_history if m.get('sharpe_ratio', 0) != 0]
+        
+        if len(sharpe_values) >= 5:
+            mean_sharpe = np.mean(sharpe_values)
+            std_sharpe = np.std(sharpe_values)
+            
+            # Calculate z-score
+            z_score = (current_sharpe - mean_sharpe) / std_sharpe if std_sharpe > 0 else 0
+            
+            # Calculate scaling factor based on z-score
+            # Higher z-score means better performance, so scale up
+            scaling_factor = min(max(0.5 + (z_score * 0.1), 0.1), 1.0)
+            
+            # Add derived metrics
+            perf_metrics.update({
+                'mean_sharpe': mean_sharpe,
+                'std_sharpe': std_sharpe,
+                'z_score': z_score,
+                'scaling_factor': scaling_factor,
+                'nan_count': sum(1 for m in self.metrics_history if m.get('sharpe_ratio', 0) == 0)
+            })
+            
+        return perf_metrics
+
+
+if __name__ == "__main__":
+    # Sample usage if run directly
+    import json
+    
+    # Load configuration
+    try:
+        with open("config/config.yaml", "r") as f:
+            config = json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        # Use fallback config
+        config = {
+            "initial_capital": 100000,
+            "max_position_size": 0.05,
+            "strategy": {
+                "name": "SampleStrategy",
+                "type": "SampleStrategy"
+            },
+            "data": {
+                "sources": [
+                    {"type": "csv", "path": "data/sample.csv"}
+                ]
+            }
+        }
+    
+    # Create and run trading engine
+    engine = TradingEngine(config)
+    engine.load_data()
+    results = engine.run_backtest()
+    
+    print(f"Backtest results: {results}")
