@@ -136,7 +136,7 @@ class LoggingManager:
                         return f"{self.COLORS['BOLD']}{self.COLORS['WARNING']}{message}{self.COLORS['ENDC']}"
                     else:
                         return f"{self.COLORS['WARNING']}{message}{self.COLORS['ENDC']}"
-                elif "[INIT]" in message:
+                elif "[INIT]" in message or "[STATUS]" in message:
                     return f"{self.COLORS['BOLD']}{self.COLORS['INFO']}{message}{self.COLORS['ENDC']}"
                 elif message.startswith("Progress:"):
                     # Clean up and highlight progress messages for better visibility
@@ -171,8 +171,11 @@ class LoggingManager:
 
             # For INFO level - only show essential status messages
             if record.levelno == logging.INFO:
-                # Show processing date messages
-                if record.msg.startswith("Processing ") or "[INIT]" in record.msg:
+                # Show processing date messages and status messages
+                if (record.msg.startswith("Processing ") or
+                    "[INIT]" in record.msg or
+                    "[STATUS]" in record.msg or
+                    record.msg.startswith("Progress:")):
                     return True
                 # Filter out most INFO messages
                 if not "ERROR" in record.msg and not "CRITICAL" in record.msg:
@@ -212,7 +215,19 @@ class LoggingManager:
         
         # Create log filename
         return f"{strategy_name}_log_{timestamp}.log"
+    
+    def log_status(self, message: str) -> None:
+        """
+        Log a status message that will appear in both log file and console.
         
+        Args:
+            message: Message to log
+        """
+        if self.logger:
+            self.logger.info(f"[STATUS] {message}")
+        else:
+            print(f"[STATUS] {message}")
+
 
 class Strategy:
     """
@@ -591,7 +606,7 @@ class TradingEngine:
         Returns:
             bool: True if data loading was successful, False otherwise
         """
-        self.logger.info("Loading data for backtesting...")
+        self.logger.info("[STATUS] Loading data...")
         
         # Get the input file path from the configuration
         paths_config = self.config.get('paths', {})
@@ -618,7 +633,7 @@ class TradingEngine:
         # Load option data
         try:
             # Load data using the data manager
-            self.logger.info(f"Loading market data...")
+            self.logger.info("[STATUS] Calculating mid prices...")
             self.data = self.data_manager.load_option_data(input_file, self.start_date, self.end_date)
             
             if self.data is None or len(self.data) == 0:
@@ -664,7 +679,7 @@ class TradingEngine:
             self.logger.error("No trading dates available")
             return {"error": "No trading dates available"}
             
-        self.logger.info(f"Running backtest: {self.start_date} to {self.end_date}")
+        self.logger.info("[STATUS] Initializing trading engine...")
         self.logger.info(f"Strategy: {self.strategy.name}")
         self.logger.info(f"Initial capital: ${self.portfolio.initial_capital:,.2f}")
         
@@ -674,6 +689,7 @@ class TradingEngine:
         
         try:
             # Process each trading day
+            self.logger.info("[STATUS] Running strategy simulation...")
             for current_date in self.trading_dates:
                 # Skip dates outside our range
                 if (self.start_date and current_date < self.start_date) or \
@@ -682,9 +698,9 @@ class TradingEngine:
                     
                 # Log progress
                 processed_days += 1
-                if processed_days % 5 == 0 or processed_days == total_days:
+                if processed_days % 1 == 0 or processed_days == total_days:
                     progress_pct = processed_days / total_days * 100
-                    self.logger.info(f"Progress: {processed_days}/{total_days} days ({progress_pct:.1f}%)")
+                    self.logger.info(f"Progress: {processed_days}/{total_days} days ({progress_pct:.1f}%) - Processing {current_date.strftime('%Y-%m-%d')} - DT.05")
                     
                 # Process the current trading day
                 self._process_trading_day(current_date)
