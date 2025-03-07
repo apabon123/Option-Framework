@@ -91,7 +91,8 @@ class Portfolio:
         position_value = price * quantity * 100 if position_type == 'option' else price * quantity
         portfolio_value = self.get_portfolio_value()
         
-        if position_value / portfolio_value > self.max_position_size_pct:
+        # Only apply position size constraint when portfolio value is positive
+        if portfolio_value > 0 and position_value / portfolio_value > self.max_position_size_pct:
             self.logger.warning(
                 f"Position size (${position_value:,.2f}) exceeds maximum allowed ({self.max_position_size_pct:.1%} of ${portfolio_value:,.2f})")
             
@@ -203,7 +204,7 @@ class Portfolio:
         pnl = position.remove_contracts(quantity, price, execution_data, reason)
         
         # Update cash balance
-        position_value = price * quantity * 100
+        position_value = price * quantity * 100 if isinstance(position, OptionPosition) else price * quantity
         if position.is_short:
             self.cash_balance -= position_value  # Short positions reduce cash when closed
         else:
@@ -259,14 +260,34 @@ class Portfolio:
         unrealized_pnl_change = 0
         realized_pnl = 0
         
+        # Make sure all positions use the same underlying price for each ticker
+        underlying_prices = {}
+        
+        # First pass: extract all unique underlying prices
+        for symbol, market_data in market_data_by_symbol.items():
+            if 'UnderlyingSymbol' in market_data and 'UnderlyingPrice' in market_data:
+                underlying_symbol = market_data['UnderlyingSymbol']
+                underlying_price = market_data['UnderlyingPrice']
+                if underlying_symbol not in underlying_prices:
+                    underlying_prices[underlying_symbol] = underlying_price
+        
         # Update each position
         for symbol, position in list(self.positions.items()):
             if symbol in market_data_by_symbol:
                 # Get previous unrealized PnL
                 prev_unrealized = position.unrealized_pnl
                 
+                # Create a copy of market data to avoid modifying the original
+                position_market_data = market_data_by_symbol[symbol].copy()
+                
+                # Override UnderlyingPrice with the common price for this underlying if available
+                if 'UnderlyingSymbol' in position_market_data:
+                    underlying_symbol = position_market_data['UnderlyingSymbol']
+                    if underlying_symbol in underlying_prices:
+                        position_market_data['UnderlyingPrice'] = underlying_prices[underlying_symbol]
+                
                 # Update position with market data
-                position.update_market_data(market_data_by_symbol[symbol])
+                position.update_market_data(position_market_data)
                 
                 # Calculate change in unrealized PnL
                 unrealized_pnl_change += (position.unrealized_pnl - prev_unrealized)
@@ -309,15 +330,18 @@ class Portfolio:
         total_value = self.cash_balance
         
         for symbol, position in self.positions.items():
-            # For short positions, unrealized PnL is a liability
-            # For long positions, unrealized PnL is an asset
-            position_value = position.current_price * position.contracts * 100
+            position_value = 0
+            
+            if isinstance(position, OptionPosition):
+                position_value = position.current_price * position.contracts * 100
+            else:
+                position_value = position.current_price * position.contracts
+                
             if position.is_short:
-                # For short positions, subtract the position value (liability)
-                # but add the unrealized P&L (negative P&L increases liability)
+                # For short positions, subtract the current position value
                 total_value -= position_value
             else:
-                # For long positions, add the position value (asset)
+                # For long positions, add the current position value
                 total_value += position_value
                 
         return total_value
@@ -507,6 +531,10 @@ class Portfolio:
         greeks = self.get_portfolio_greeks()
         portfolio_value = self.get_portfolio_value()
 
+        # Skip the check if portfolio value is zero or negative
+        if portfolio_value <= 0:
+            return True
+
         # Calculate delta percentage
         delta_pct = abs(greeks['delta_pct'])
 
@@ -541,7 +569,12 @@ class Portfolio:
         Update total portfolio value based on current positions.
         """
         # Calculate position value
-        position_value = sum(pos.current_price * pos.contracts for pos in self.positions.values())
+        position_value = 0
+        for pos in self.positions.values():
+            if isinstance(pos, OptionPosition):
+                position_value += pos.current_price * pos.contracts * 100
+            else:
+                position_value += pos.current_price * pos.contracts
 
         # Update total value
         self.position_value = position_value
@@ -560,11 +593,26 @@ class Portfolio:
         """
         self.logger.debug(f"Updating positions for {current_date}")
 
+        # Extract all unique underlying prices to ensure consistency
+        underlying_prices = {}
+        for _, row in daily_data.iterrows():
+            if 'UnderlyingSymbol' in row and 'UnderlyingPrice' in row:
+                underlying_symbol = row['UnderlyingSymbol']
+                if underlying_symbol not in underlying_prices:
+                    underlying_prices[underlying_symbol] = row['UnderlyingPrice']
+
         # Create a dictionary of option data by symbol for quick lookup
         market_data = {}
         for _, row in daily_data.iterrows():
             if 'OptionSymbol' in row:
-                market_data[row['OptionSymbol']] = row
+                # Make a copy of the row to avoid modifying the original
+                data = row.copy()
+                
+                # Override the underlying price with the consistent value for this symbol
+                if 'UnderlyingSymbol' in row and row['UnderlyingSymbol'] in underlying_prices:
+                    data['UnderlyingPrice'] = underlying_prices[row['UnderlyingSymbol']]
+                    
+                market_data[row['OptionSymbol']] = data
 
         # Update each position
         for symbol, position in list(self.positions.items()):
@@ -629,9 +677,12 @@ class Portfolio:
         
         for symbol, position in self.positions.items():
             # Calculate position value
-            position_value = abs(position.current_price * position.contracts * 100)
+            if isinstance(position, OptionPosition):
+                position_value = abs(position.current_price * position.contracts * 100)
+            else:
+                position_value = abs(position.current_price * position.contracts)
             
-            # Calculate allocation percentage
+            # Calculate allocation percentage - handle zero or negative portfolio value
             allocation = position_value / portfolio_value if portfolio_value > 0 else 0
             
             # Compile position data

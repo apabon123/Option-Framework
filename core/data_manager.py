@@ -21,14 +21,16 @@ class DataManager:
     and providing filtered views of the data based on date ranges, option characteristics, etc.
     """
     
-    def __init__(self, logger: Optional[logging.Logger] = None):
+    def __init__(self, config: Optional[Dict[str, Any]] = None, logger: Optional[logging.Logger] = None):
         """
         Initialize the DataManager.
         
         Args:
+            config: Configuration dictionary
             logger: Logger instance
         """
         self.logger = logger or logging.getLogger('trading')
+        self.config = config or {}
         self.data = None
         self.underlying_data = None  # Store underlying price data separately
         self.data_info = {}
@@ -77,6 +79,11 @@ class DataManager:
             if 'DaysToExpiry' not in df.columns:
                 df['DaysToExpiry'] = (df['Expiration'] - df['DataDate']).dt.days
                 self.logger.info("Added DaysToExpiry column")
+                
+            # Calculate MidPrice if not present
+            if 'MidPrice' not in df.columns:
+                self.logger.info("Calculating MidPrice from Bid and Ask...")
+                df = self.calculate_mid_prices(df)
             
             # Store and log data info
             self.data = df
@@ -148,377 +155,298 @@ class DataManager:
         spread_pct = pd.Series(index=result_df.index)
         spread_pct.loc[valid_mask & (mid > 0)] = (ask - bid) / mid
         
-        # Create MidPrice column with default from Last
-        result_df['MidPrice'] = last
+        # For non-valid bid/ask, use Last price if available
+        last_price_mask = (~valid_mask) & (last > 0)
+        mid.loc[last_price_mask] = last
         
-        # Update where spread is normal
-        normal_spread_mask = valid_mask & (spread_pct <= normal_spread)
-        result_df.loc[normal_spread_mask, 'MidPrice'] = mid.loc[normal_spread_mask]
-        
-        # Add spread percentage as a column for reference
+        # Mark invalid bids
+        result_df['MidPrice'] = mid
         result_df['SpreadPct'] = spread_pct
+        result_df['ValidBidAsk'] = valid_mask
+        result_df['UseLastPrice'] = last_price_mask
+        result_df['AbnormalSpread'] = spread_pct > normal_spread
         
-        # Log statistics
-        valid_prices = result_df[result_df['MidPrice'] > 0]
-        self.logger.info(f"Mid prices calculated: {len(valid_prices)} valid prices")
+        count_valid = valid_mask.sum()
+        count_last = last_price_mask.sum()
+        count_abnormal = (result_df['AbnormalSpread'] == True).sum()
         
-        if not valid_prices.empty:
-            self.logger.info(f"Price range: ${valid_prices['MidPrice'].min():.2f} to ${valid_prices['MidPrice'].max():.2f}")
-            avg_spread = (valid_prices['Ask'] - valid_prices['Bid']).mean()
-            self.logger.info(f"Average bid-ask spread: ${avg_spread:.4f}")
-            
+        self.logger.info(f"Mid price calculation: {count_valid} valid bid/ask pairs")
+        self.logger.info(f"  {count_last} used last price")
+        self.logger.info(f"  {count_abnormal} with abnormal spread (>{normal_spread:%})")
+        
         return result_df
-
-
-    def prepare_option_data(self, df, current_date, normal_spread):
-        """
-        Prepare option data with mid prices and days to expiry calculations.
-        Also adds underlying data as separate rows for hedging.
-
-        Args:
-            df: DataFrame of option data
-            current_date: Current simulation date
-            normal_spread: Maximum acceptable bid-ask spread percentage
-
-        Returns:
-            DataFrame: Processed DataFrame with MidPrice, DaysToExpiry and underlying rows
-        """
-        self.logger.info(f"[Engine] Preparing option data for {current_date}")
-
-        # Make a copy to avoid modifying the original
-        result_df = df.copy()
-
-        # Calculate mid prices
-        result_df = self.calculate_mid_prices(result_df, normal_spread)
-
-        # Calculate days to expiry if needed
-        if 'DaysToExpiry' not in result_df.columns:
-            # Convert current_date to datetime if it's a string
-            if isinstance(current_date, str):
-                current_dt = pd.to_datetime(current_date)
-            else:
-                current_dt = current_date
-
-            # Convert Expiration to datetime if needed
-            if isinstance(result_df['Expiration'].iloc[0], str):
-                result_df['ExpirationDate'] = pd.to_datetime(result_df['Expiration'])
-            else:
-                result_df['ExpirationDate'] = result_df['Expiration']
-
-            # Calculate days to expiry
-            result_df['DaysToExpiry'] = (result_df['ExpirationDate'] - current_dt).dt.days
-            
-        # Get underlying data and append it to our result
-        underlying_data = self.get_underlying_data(current_date)
-        
-        if not underlying_data.empty:
-            # Create DataFrame for underlying securities
-            underlying_rows = []
-            
-            for _, row in underlying_data.iterrows():
-                # Create a row for each underlying security
-                underlying_row = {
-                    'DataDate': row['DataDate'],
-                    'Symbol': row['Symbol'],            # Use the pure symbol as the key
-                    'OptionSymbol': row['Symbol'],      # For compatibility with option code
-                    'UnderlyingSymbol': row['Symbol'],  # Same as symbol for the underlying
-                    'UnderlyingPrice': row['UnderlyingPrice'],
-                    'MidPrice': row['UnderlyingPrice'], # Use underlying price as mid price
-                    'Type': 'underlying',               # Mark as underlying type
-                    'Strike': row['UnderlyingPrice'],   # Set strike equal to price for delta calc
-                    'DaysToExpiry': 0,                  # No expiry for underlying
-                    'Delta': 1.0,                       # Delta is always 1.0 for underlying
-                    'Gamma': 0.0,                       # No gamma for underlying
-                    'Theta': 0.0,                       # No theta for underlying
-                    'Vega': 0.0                         # No vega for underlying
-                }
-                underlying_rows.append(underlying_row)
-                
-            # Create DataFrame from the underlying rows
-            if underlying_rows:
-                # Only add if we have rows
-                underlying_df = pd.DataFrame(underlying_rows)
-                
-                # Combine with the option data
-                result_df = pd.concat([result_df, underlying_df], ignore_index=True)
-                
-                self.logger.info(f"[Engine] Added {len(underlying_rows)} underlying securities to daily data")
-        
-        self.logger.info(f"[Engine] Prepared data: {len(result_df)} rows with MidPrice and DaysToExpiry")
-
-        return result_df
-
-    def get_daily_data(self, date: datetime) -> pd.DataFrame:
-        """
-        Get data for a specific date from the loaded dataset.
-        
-        Args:
-            date: Date to filter data for
-            
-        Returns:
-            DataFrame: Option data for the specified date
-        """
-        if self.data is None:
-            self.logger.warning("No data loaded. Call load_option_data first.")
-            return pd.DataFrame()
-            
-        daily_data = self.data[self.data['DataDate'] == date].copy()
-        self.logger.debug(f"Retrieved {len(daily_data)} records for {date}")
-        return daily_data
-        
-    def get_underlying_data(self, date: datetime) -> pd.DataFrame:
-        """
-        Get underlying price data for a specific date.
-        
-        Args:
-            date: Date to filter data for
-            
-        Returns:
-            DataFrame: Underlying price data for the specified date
-        """
-        if self.underlying_data is None:
-            self.logger.warning("No underlying data available.")
-            return pd.DataFrame()
-            
-        daily_underlying = self.underlying_data[self.underlying_data['DataDate'] == date].copy()
-        self.logger.debug(f"Retrieved {len(daily_underlying)} underlying records for {date}")
-        return daily_underlying
     
-    def get_date_range(self) -> Tuple[datetime, datetime]:
-        """
-        Get the date range of the loaded data.
-        
-        Returns:
-            tuple: (min_date, max_date)
-        """
-        if self.data is None or self.data.empty:
-            return None, None
-            
-        min_date = self.data['DataDate'].min()
-        max_date = self.data['DataDate'].max()
-        
-        return min_date, max_date
-    
-    def get_dates_list(self) -> List[datetime]:
-        """
-        Get a sorted list of all unique dates in the dataset.
-        
-        Returns:
-            list: List of unique dates
-        """
-        if self.data is None or self.data.empty:
-            return []
-            
-        return sorted(self.data['DataDate'].unique())
-    
-    def get_market_data_by_symbol(self, daily_data: pd.DataFrame) -> Dict[str, pd.Series]:
-        """
-        Create a dictionary of market data by symbol (option or underlying).
-        
-        Args:
-            daily_data: DataFrame of daily option data
-            
-        Returns:
-            dict: Dictionary of {symbol: data_row}
-        """
-        market_data = {}
-        
-        # Process each row
-        for _, row in daily_data.iterrows():
-            # For option symbols, use OptionSymbol as key
-            if 'OptionSymbol' in row:
-                market_data[row['OptionSymbol']] = row
-                
-            # For underlying symbols (when present as separate entries)
-            if 'Type' in row and row['Type'] == 'underlying' and 'Symbol' in row:
-                # Use underlying symbol as key
-                market_data[row['Symbol']] = row
-                
-        return market_data
-    
-    def filter_by_criteria(
+    def filter_chain(
         self, 
-        df: pd.DataFrame, 
+        df: Optional[pd.DataFrame] = None, 
+        date: Optional[datetime] = None, 
+        min_dte: int = 0, 
+        max_dte: int = 365,
+        min_delta: float = 0, 
+        max_delta: float = 1.0,
         option_type: Optional[str] = None,
-        min_dte: Optional[int] = None,
-        max_dte: Optional[int] = None,
-        min_delta: Optional[float] = None,
-        max_delta: Optional[float] = None,
-        min_strike: Optional[float] = None,
-        max_strike: Optional[float] = None
+        min_bid: float = 0.05,
+        only_standard: bool = True
     ) -> pd.DataFrame:
         """
-        Filter options data by multiple criteria.
+        Filter option chain by various criteria.
         
         Args:
-            df: DataFrame of option data
-            option_type: 'call', 'put', or None for all
-            min_dte: Minimum days to expiration
-            max_dte: Maximum days to expiration
-            min_delta: Minimum delta value
-            max_delta: Maximum delta value
-            min_strike: Minimum strike price
-            max_strike: Maximum strike price
+            df: DataFrame to filter (defaults to self.data)
+            date: Date to filter for (defaults to first date)
+            min_dte: Minimum days to expiry
+            max_dte: Maximum days to expiry
+            min_delta: Minimum absolute delta
+            max_delta: Maximum absolute delta
+            option_type: Option type to filter for (CALL, PUT, or None for both)
+            min_bid: Minimum bid price
+            only_standard: Only include standard expirations
             
         Returns:
-            DataFrame: Filtered option data
+            DataFrame: Filtered data
         """
-        filtered_df = df.copy()
+        # Use provided DataFrame or default to stored data
+        if df is None:
+            if self.data is None:
+                self.logger.error("No data loaded")
+                return pd.DataFrame()
+            df = self.data
         
-        # Apply filters if provided
+        # Start with the original data
+        filtered = df.copy()
+        
+        # Filter by date
+        if date:
+            filtered = filtered[filtered['DataDate'] == date]
+            self.logger.info(f"Filtered to date: {date}")
+        else:
+            # Use the first date in the DataFrame
+            first_date = filtered['DataDate'].min()
+            filtered = filtered[filtered['DataDate'] == first_date]
+            self.logger.info(f"Filtered to first date: {first_date}")
+        
+        # Filter by days to expiry
+        filtered = filtered[(filtered['DaysToExpiry'] >= min_dte) & (filtered['DaysToExpiry'] <= max_dte)]
+        
+        # Filter by option type
         if option_type:
-            filtered_df = filtered_df[filtered_df['Type'].str.lower() == option_type.lower()]
+            filtered = filtered[filtered['Type'] == option_type.upper()]
             
-        if min_dte is not None:
-            filtered_df = filtered_df[filtered_df['DaysToExpiry'] >= min_dte]
+        # Filter by bid price
+        filtered = filtered[filtered['Bid'] >= min_bid]
+        
+        # Filter by delta
+        if 'Delta' in filtered.columns:
+            # Use absolute delta for comparison
+            filtered['AbsDelta'] = filtered['Delta'].abs()
+            filtered = filtered[(filtered['AbsDelta'] >= min_delta) & (filtered['AbsDelta'] <= max_delta)]
             
-        if max_dte is not None:
-            filtered_df = filtered_df[filtered_df['DaysToExpiry'] <= max_dte]
+        # Filter for standard expirations if requested
+        if only_standard and 'Standard' in filtered.columns:
+            filtered = filtered[filtered['Standard'] == True]
             
-        if min_delta is not None:
-            filtered_df = filtered_df[filtered_df['Delta'] >= min_delta]
-            
-        if max_delta is not None:
-            filtered_df = filtered_df[filtered_df['Delta'] <= max_delta]
-            
-        if min_strike is not None:
-            filtered_df = filtered_df[filtered_df['Strike'] >= min_strike]
-            
-        if max_strike is not None:
-            filtered_df = filtered_df[filtered_df['Strike'] <= max_strike]
-            
-        self.logger.debug(f"Filtered from {len(df)} to {len(filtered_df)} options")
-        return filtered_df
+        self.logger.info(f"Filtered to {len(filtered)} options")
+        
+        return filtered
     
-    def check_data_quality(self, df: pd.DataFrame) -> Dict[str, Any]:
+    def get_data_for_date(self, date: datetime) -> pd.DataFrame:
         """
-        Check data quality and return statistics about issues found.
+        Get all data for a specific date.
         
         Args:
-            df: DataFrame to check
+            date: Date to get data for
             
         Returns:
-            dict: Data quality metrics
+            DataFrame: Data for the specified date
         """
-        stats = {
-            'total_rows': len(df),
-            'missing_values': {},
-            'zero_values': {},
-            'negative_values': {},
-            'outliers': {}
-        }
+        if self.data is None:
+            self.logger.error("No data loaded")
+            return pd.DataFrame()
+            
+        return self.data[self.data['DataDate'] == date]
+    
+    def get_option_data(
+        self, 
+        symbol: str, 
+        date: Optional[datetime] = None
+    ) -> pd.DataFrame:
+        """
+        Get data for a specific option symbol, optionally filtered by date.
         
-        # Check for missing values
-        for col in df.columns:
-            missing = df[col].isna().sum()
-            if missing > 0:
-                stats['missing_values'][col] = missing
+        Args:
+            symbol: Option symbol to get data for
+            date: Date to filter for (optional)
+            
+        Returns:
+            DataFrame: Data for the specified option
+        """
+        if self.data is None:
+            self.logger.error("No data loaded")
+            return pd.DataFrame()
+            
+        filtered = self.data[self.data['OptionSymbol'] == symbol]
         
-        # Check for zero values in numeric columns
-        numeric_cols = df.select_dtypes(include=[np.number]).columns
-        for col in numeric_cols:
-            if col in ['Strike', 'UnderlyingPrice', 'MidPrice', 'Bid', 'Ask']:
-                zero_count = (df[col] == 0).sum()
-                if zero_count > 0:
-                    stats['zero_values'][col] = zero_count
+        if date:
+            filtered = filtered[filtered['DataDate'] == date]
+            
+        return filtered
+    
+    def get_underlying_data(self, symbol: str) -> pd.DataFrame:
+        """
+        Get underlying price data for a specific symbol.
         
-        # Check for negative values in price columns
-        price_cols = ['Strike', 'UnderlyingPrice', 'MidPrice', 'Bid', 'Ask']
-        for col in price_cols:
-            if col in df.columns:
-                neg_count = (df[col] < 0).sum()
-                if neg_count > 0:
-                    stats['negative_values'][col] = neg_count
-        
-        # Add other checks as needed
-        
-        return stats
+        Args:
+            symbol: Underlying symbol
+            
+        Returns:
+            DataFrame: Underlying price data
+        """
+        if self.underlying_data is None:
+            self.logger.error("No underlying data available")
+            return pd.DataFrame()
+            
+        if symbol not in self.underlying_data:
+            self.logger.error(f"No data for underlying {symbol}")
+            return pd.DataFrame()
+            
+        return self.underlying_data[symbol]
     
     def _extract_underlying_data(self, df: pd.DataFrame) -> None:
         """
         Extract and store underlying price data from option data.
         
-        This function creates a DataFrame containing underlying price data
-        for each date and underlying symbol, which can be used for hedging
-        and other calculations.
-        
         Args:
             df: Option data DataFrame
         """
-        # Check if necessary columns exist
-        if 'UnderlyingSymbol' not in df.columns or 'UnderlyingPrice' not in df.columns:
-            self.logger.warning("Cannot extract underlying data: missing required columns")
+        if 'UnderlyingSymbol' not in df.columns or 'UnderlyingPrice' not in df.columns or 'DataDate' not in df.columns:
+            self.logger.warning("Cannot extract underlying data - missing required columns")
             return
             
-        try:
-            # Group by date and underlying symbol, taking the first value for each group
-            # (underlying prices should be the same for all options on same underlying and date)
-            underlying_data = df.groupby(['DataDate', 'UnderlyingSymbol']).agg({
-                'UnderlyingPrice': 'first'
-            }).reset_index()
+        self.logger.info("Extracting underlying price data...")
+        
+        # Group by underlying and date, taking the first price entry
+        underlying_data = {}
+        
+        for symbol in df['UnderlyingSymbol'].unique():
+            # Filter data for this symbol
+            symbol_data = df[df['UnderlyingSymbol'] == symbol]
             
-            # Create a symbol column for easy lookup
-            underlying_data['Symbol'] = underlying_data['UnderlyingSymbol']
+            # Group by date and get first price
+            prices_by_date = symbol_data.groupby('DataDate')['UnderlyingPrice'].first()
             
-            # Store the underlying data
-            self.underlying_data = underlying_data
+            # Convert to DataFrame
+            price_df = pd.DataFrame({
+                'DataDate': prices_by_date.index,
+                'Price': prices_by_date.values
+            })
             
-            self.logger.info(f"Extracted underlying price data for {len(underlying_data)} date-symbol pairs")
+            underlying_data[symbol] = price_df
             
-            # Add some statistics
-            unique_underlyings = underlying_data['UnderlyingSymbol'].nunique()
-            unique_dates = underlying_data['DataDate'].nunique()
-            self.logger.info(f"Underlying data covers {unique_underlyings} symbols across {unique_dates} dates")
-            
-        except Exception as e:
-            self.logger.error(f"Error extracting underlying data: {e}")
-            import traceback
-            self.logger.debug(traceback.format_exc())
+        self.underlying_data = underlying_data
     
     def _log_data_info(self, df: pd.DataFrame) -> None:
         """
-        Log information about the loaded data.
+        Log information about the data and store in data_info.
         
         Args:
-            df: DataFrame to analyze
+            df: Data DataFrame
         """
-        # Calculate and store data info
-        date_range = f"{df['DataDate'].min()} to {df['DataDate'].max()}"
+        # Count unique values
+        num_dates = df['DataDate'].nunique()
+        start_date = df['DataDate'].min()
+        end_date = df['DataDate'].max()
         
-        # Get unique values counts
-        unique_dates = df['DataDate'].nunique()
-        unique_symbols = df['OptionSymbol'].nunique() if 'OptionSymbol' in df.columns else 0
-        unique_underlyings = df['UnderlyingSymbol'].nunique() if 'UnderlyingSymbol' in df.columns else 0
-        unique_expiries = df['Expiration'].nunique()
-        
-        # Summarize price ranges
-        underlying_range = f"${df['UnderlyingPrice'].min():.2f} to ${df['UnderlyingPrice'].max():.2f}"
-        strike_range = f"${df['Strike'].min():.2f} to ${df['Strike'].max():.2f}"
-        
-        # Store in data_info
+        # Get option types if available
+        if 'Type' in df.columns:
+            call_count = len(df[df['Type'] == 'CALL'])
+            put_count = len(df[df['Type'] == 'PUT'])
+        else:
+            call_count = put_count = 0
+            
+        # Get underlying symbols if available
+        if 'UnderlyingSymbol' in df.columns:
+            unique_symbols = df['UnderlyingSymbol'].nunique()
+            symbols = df['UnderlyingSymbol'].unique()
+        else:
+            unique_symbols = 0
+            symbols = []
+            
+        # Store info
         self.data_info = {
             'rows': len(df),
-            'date_range': date_range,
-            'unique_dates': unique_dates,
+            'dates': num_dates,
+            'start_date': start_date,
+            'end_date': end_date,
+            'call_count': call_count,
+            'put_count': put_count,
             'unique_symbols': unique_symbols,
-            'unique_underlyings': unique_underlyings,
-            'unique_expiries': unique_expiries,
-            'underlying_range': underlying_range,
-            'strike_range': strike_range
+            'symbols': symbols
         }
         
-        # Log the information
-        self.logger.info(f"Data loaded: {len(df)} rows")
-        self.logger.info(f"Date range: {date_range}")
-        self.logger.info(f"Unique trading days: {unique_dates}")
-        self.logger.info(f"Unique option symbols: {unique_symbols}")
-        self.logger.info(f"Unique underlying symbols: {unique_underlyings}")
-        self.logger.info(f"Unique expiration dates: {unique_expiries}")
-        self.logger.info(f"Underlying price range: {underlying_range}")
-        self.logger.info(f"Strike price range: {strike_range}")
+        # Log summary
+        self.logger.info(f"Loaded {len(df)} rows for {num_dates} dates from {start_date} to {end_date}")
+        if call_count + put_count > 0:
+            self.logger.info(f"  {call_count} calls, {put_count} puts")
+        if unique_symbols > 0:
+            self.logger.info(f"  {unique_symbols} unique underlying symbols")
+            
+    def get_dates(self) -> List[datetime]:
+        """
+        Get a list of all dates in the data.
         
-        # Check for key columns
-        required_cols = ['OptionSymbol', 'Strike', 'Expiration', 'Type', 'Delta']
-        missing_cols = [col for col in required_cols if col not in df.columns]
-        if missing_cols:
-            self.logger.warning(f"Missing important columns: {', '.join(missing_cols)}")
+        Returns:
+            list: List of dates
+        """
+        if self.data is None:
+            return []
+            
+        return sorted(self.data['DataDate'].unique())
+    
+    def get_symbols(self) -> List[str]:
+        """
+        Get a list of all underlying symbols.
+        
+        Returns:
+            list: List of symbols
+        """
+        if self.data is None or 'UnderlyingSymbol' not in self.data.columns:
+            return []
+            
+        return sorted(self.data['UnderlyingSymbol'].unique())
+    
+    def generate_trading_dates(
+        self, 
+        start_date: Optional[datetime] = None, 
+        end_date: Optional[datetime] = None,
+        skip_weekends: bool = True
+    ) -> List[datetime]:
+        """
+        Generate a list of trading dates between start and end dates.
+        
+        Args:
+            start_date: Start date (defaults to first date in data)
+            end_date: End date (defaults to last date in data)
+            skip_weekends: Whether to skip weekends
+            
+        Returns:
+            list: List of dates
+        """
+        if self.data is None:
+            self.logger.error("No data loaded")
+            return []
+            
+        if not start_date:
+            start_date = self.data['DataDate'].min()
+            
+        if not end_date:
+            end_date = self.data['DataDate'].max()
+            
+        # Get a date range
+        days = (end_date - start_date).days + 1
+        dates = [start_date + timedelta(days=i) for i in range(days)]
+        
+        # Skip weekends if requested
+        if skip_weekends:
+            dates = [d for d in dates if d.weekday() < 5]  # 0-4 = Monday-Friday
+            
+        return dates
