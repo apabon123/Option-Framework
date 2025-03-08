@@ -1,0 +1,55 @@
+---
+description: Coding pattern
+globs: 
+alwaysApply: false
+---
+# Coding Pattern Preferences for Cursor
+
+## Simplicity & Clarity
+- **Keep It Simple:**  
+  Write solutions that are straightforward and self-explanatory. Avoid unnecessary complexity so that the code “speaks for itself.”
+
+- **Self-Documenting Code:**  
+  Use descriptive names and clear logic so that anyone reading the code understands its purpose without excessive comments.
+
+## Code Reuse & Avoiding Duplication
+- **Avoid Duplicate Code:**  
+  Before writing new functionality, search the codebase for similar existing implementations. If the functionality exists, modify or fix it rather than creating redundant code.
+
+- **Refactor When Needed:**  
+  If you introduce a new approach to fix an issue, ensure you remove or refactor the old implementation to prevent duplicated logic.
+
+## Environment Separation
+- **Distinct Environments:**  
+  Clearly separate development, testing, and production environments:
+  - **Development (Dev):** Use local resources and real data where possible.
+  - **Testing (Test):** Employ mocks and stubs only in test environments.
+  - **Production (Prod):** Ensure that no test-only code (like fallback mock data) is deployed in production.
+
+- **Configuration Management:**  
+  Use environment-specific configuration files or settings to avoid cross-contamination between Dev, Test, and Prod.
+
+## Focused Changes & Minimal Disruption
+- **Stay on Target:**  
+  Only make changes related to the requested feature or bug fix. Avoid altering unrelated parts of the codebase that could inadvertently cause other issues.
+
+- **Avoid Introducing Unnecessary Patterns:**  
+  Don’t introduce new patterns or technologies unless absolutely necessary. Exhaust all options with the existing implementation first, then remove any outdated code after the new code is integrated.
+
+## Codebase Cleanliness & Organization
+- **Keep It Organized:**  
+  Regularly refactor to maintain an organized codebase. Avoid having overly long files (e.g., files exceeding 200-300 lines) by breaking them into smaller, manageable modules.
+
+- **Eliminate One-Off Scripts:**  
+  Do not leave temporary or one-off scripts in the codebase. Run such scripts inline or delete them after use to prevent clutter.
+
+## Testing & Data Integrity
+- **Use Mocks Only in Testing:**  
+  Limit the use of fake or stub data strictly to the testing environment. Ensure that scraping, API calls, or production processes do not fall back to using mock data.
+
+- **Ensure Data Accuracy:**  
+  Validate that all data used in Dev and Prod reflects real and current data, avoiding the pitfalls of inadvertently relying on fake data.
+
+## Sensitive Data & API Keys
+- **Protect Critical Resources:**  
+  Do not include patterns that might overwrite or expose API keys or other sensitive configuration files. Safeguard these credentials by isolating them in secure, environment-specific configurations.

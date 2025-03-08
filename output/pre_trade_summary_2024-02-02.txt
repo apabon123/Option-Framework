@@ -1,0 +1,39 @@
+============================================================
+PRE-TRADE Summary [2024-02-02]:
+Daily P&L: $-11.50 (-0.01%)
+  Option PnL: $0.00
+  Hedge PnL: $0.00
+Open Trades: 1
+Total Position Exposure: 0.1% of NLV
+Net Liq: $99795.50
+  Cash Balance: $99854.50
+  Total Liability: $59.00
+  Self Hedge (Hedge PnL): $0.00
+Total Margin Requirement: $59.00
+Available Margin: $99736.50
+Margin-Based Leverage: 0.00
+
+Portfolio Greek Risk:
+  Option Delta: -0.057 ($-567.00)
+  Hedge Delta: 0.000 ($0.00)
+  Total Delta: -0.057 ($-567.00)
+  Gamma: -0.004500 ($-45.00 per 1% move)
+  Theta: $7.76 per day
+  Vega: $-25.73 per 1% IV
+
+Rolling Metrics:
+  Expanding Window (all obs, min 5 required): Sharpe: -4.16, Volatility: 0.52%
+  Short Window (21 days, rolling): Sharpe: -4.16, Volatility: 0.52%
+  Medium Window (63 days, rolling): Sharpe: -4.16, Volatility: 0.52%
+  Long Window (252 days, rolling): Sharpe: -4.16, Volatility: 0.52%
+--------------------------------------------------
+
+Open Trades Table:
+------------------------------------------------------------------------------------------------------------------------
+Symbol           Contracts   Entry  Current      Value  NLV% Underlying      Delta      Gamma      Theta       Vega     Margin   DTE
+------------------------------------------------------------------------------------------------------------------------
+SPY240419C00540000          1 $ 0.47 $  0.59 $   59.00  0.1% $  494.17     0.057  0.004500 $   -7.76 $   25.73 $       0    77
+------------------------------------------------------------------------------------------------------------------------
+TOTAL                                       $   59.00  0.1%                               $       0
+------------------------------------------------------------------------------------------------------------------------
+============================================================

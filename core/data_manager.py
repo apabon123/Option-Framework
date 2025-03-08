@@ -29,11 +29,12 @@ class DataManager:
             config: Configuration dictionary
             logger: Logger instance
         """
-        self.logger = logger or logging.getLogger('trading')
         self.config = config or {}
+        self.logger = logger or logging.getLogger(__name__)
         self.data = None
         self.underlying_data = None  # Store underlying price data separately
         self.data_info = {}
+        self.trading_dates = []
     
     def load_option_data(
         self, 
@@ -58,47 +59,128 @@ class DataManager:
             # Check if file exists
             if not os.path.exists(file_path):
                 self.logger.error(f"File not found: {file_path}")
-                raise FileNotFoundError(f"File not found: {file_path}")
+                return None
                 
-            # Read the CSV file
-            df = pd.read_csv(file_path, parse_dates=['DataDate', 'Expiration'])
+            # Load the CSV file
+            self.logger.debug(f"Reading CSV file: {file_path}")
+            print(f"Reading CSV file: {file_path}...")
+            try:
+                # Print the first few lines of the file to debug
+                with open(file_path, 'r') as f:
+                    first_lines = [next(f) for _ in range(5)]
+                    self.logger.debug(f"First few lines of the file:\n{''.join(first_lines)}")
+                
+                df = pd.read_csv(file_path)
+                print(f"CSV file loaded with {len(df)} rows")
+                self.logger.debug(f"CSV file loaded successfully with {len(df)} rows")
+            except Exception as e:
+                self.logger.error(f"Error reading CSV file: {e}")
+                import traceback
+                self.logger.debug(traceback.format_exc())
+                print(f"ERROR reading CSV file: {e}")
+                return None
+                
+            # Check if we have data
+            if df.empty:
+                self.logger.warning("CSV file is empty")
+                print("WARNING: CSV file is empty")
+                return None
+                
+            # Log the columns we have
+            self.logger.debug(f"CSV columns: {df.columns.tolist()}")
             
-            # Filter by date range if provided
-            if start_date:
+            # Map column names to standard names
+            column_mapping = {}
+            
+            # Check for date column
+            if 'DataDate' in df.columns:
+                date_col = 'DataDate'
+            elif 'date' in df.columns:
+                date_col = 'date'
+                column_mapping['date'] = 'DataDate'
+                print("Mapping 'date' column to 'DataDate'")
+            else:
+                self.logger.warning("No date column found in data")
+                print("WARNING: No date column found in data")
+                date_col = None
+                
+            # Check for expiry column
+            if 'Expiration' in df.columns:
+                expiry_col = 'Expiration'
+            elif 'expiry' in df.columns:
+                expiry_col = 'expiry'
+                column_mapping['expiry'] = 'Expiration'
+                print("Mapping 'expiry' column to 'Expiration'")
+            else:
+                self.logger.warning("No expiry column found in data")
+                print("WARNING: No expiry column found in data")
+                expiry_col = None
+                
+            # Rename columns if needed
+            if column_mapping:
+                self.logger.debug(f"Renaming columns: {column_mapping}")
+                df = df.rename(columns=column_mapping)
+                
+            # Convert date columns to datetime if they exist
+            date_columns = ['DataDate', 'Expiration']
+            for col in date_columns:
+                if col in df.columns:
+                    self.logger.debug(f"Converting {col} column to datetime")
+                    print(f"Converting {col} column to datetime...")
+                    try:
+                        df[col] = pd.to_datetime(df[col])
+                        self.logger.debug(f"Successfully converted {col} to datetime")
+                    except Exception as e:
+                        self.logger.warning(f"Error converting {col} to datetime: {e}")
+                        import traceback
+                        self.logger.debug(traceback.format_exc())
+                        print(f"WARNING: Error converting {col} to datetime")
+            
+            # Filter by date range if specified
+            original_rows = len(df)
+            if start_date is not None and 'DataDate' in df.columns:
+                self.logger.debug(f"Filtering by start date: {start_date}")
+                print(f"Filtering data from {start_date}...")
                 df = df[df['DataDate'] >= start_date]
-                self.logger.info(f"Filtered data from {start_date}")
-                
-            if end_date:
+                    
+            if end_date is not None and 'DataDate' in df.columns:
+                self.logger.debug(f"Filtering by end date: {end_date}")
+                print(f"Filtering data to {end_date}...")
                 df = df[df['DataDate'] <= end_date]
-                self.logger.info(f"Filtered data to {end_date}")
-            
-            # Reset index
-            df.reset_index(inplace=True, drop=True)
-            
-            # Calculate days to expiry if not present
-            if 'DaysToExpiry' not in df.columns:
-                df['DaysToExpiry'] = (df['Expiration'] - df['DataDate']).dt.days
-                self.logger.info("Added DaysToExpiry column")
                 
-            # Calculate MidPrice if not present
-            if 'MidPrice' not in df.columns:
-                self.logger.info("Calculating MidPrice from Bid and Ask...")
-                df = self.calculate_mid_prices(df)
+            if original_rows != len(df):
+                print(f"Date filtering: {original_rows} rows -> {len(df)} rows")
             
-            # Store and log data info
+            # Calculate days to expiry if not already present
+            if 'DaysToExpiry' not in df.columns and 'DataDate' in df.columns and 'Expiration' in df.columns:
+                self.logger.debug("Calculating days to expiry")
+                print("Calculating days to expiry...")
+                try:
+                    df['DaysToExpiry'] = (df['Expiration'] - df['DataDate']).dt.days
+                    self.logger.info("Added DaysToExpiry column")
+                except Exception as e:
+                    self.logger.warning(f"Error calculating days to expiry: {e}")
+                    import traceback
+                    self.logger.debug(traceback.format_exc())
+                    print(f"WARNING: Error calculating days to expiry: {e}")
+            elif 'days_to_expiry' in df.columns:
+                # Rename days_to_expiry to DaysToExpiry if it exists
+                df = df.rename(columns={'days_to_expiry': 'DaysToExpiry'})
+                print("Renamed 'days_to_expiry' to 'DaysToExpiry'")
+                
+            # Store the data
             self.data = df
-            
-            # Extract underlying data
-            self._extract_underlying_data(df)
-            
-            self._log_data_info(df)
-            
+            self.logger.debug(f"Option data loaded successfully with {len(df)} rows")
+            print(f"Data preparation complete - {len(df)} rows ready")
             return df
             
         except Exception as e:
-            self.logger.error(f"Error loading data: {e}")
-            raise
-            
+            self.logger.error(f"Error loading option data: {e}")
+            import traceback
+            self.logger.debug(traceback.format_exc())
+            print(f"ERROR loading option data: {e}")
+            return None
+    
     def load_from_file(self, file_path: str) -> bool:
         """
         Load data from a CSV file.
@@ -110,11 +192,28 @@ class DataManager:
             bool: True if successful, False otherwise
         """
         try:
+            self.logger.debug(f"Attempting to load data from file: {file_path}")
+            # Check if file exists
+            if not os.path.exists(file_path):
+                self.logger.error(f"File not found: {file_path}")
+                print(f"ERROR: File not found: {file_path}")
+                return False
+                
             # Just delegate to load_option_data method
-            self.load_option_data(file_path)
+            self.data = self.load_option_data(file_path)
+            
+            if self.data is None or self.data.empty:
+                self.logger.error("No data loaded from file")
+                print("ERROR: No data loaded from file (empty dataset)")
+                return False
+                
+            self.logger.debug(f"Successfully loaded data from file: {file_path}")
             return True
         except Exception as e:
             self.logger.error(f"Error loading data from file: {e}")
+            import traceback
+            self.logger.debug(traceback.format_exc())
+            print(f"ERROR loading file: {e}")
             return False
     
     def calculate_mid_prices(self, df: pd.DataFrame, normal_spread: float = 0.20) -> pd.DataFrame:
@@ -450,3 +549,126 @@ class DataManager:
             dates = [d for d in dates if d.weekday() < 5]  # 0-4 = Monday-Friday
             
         return dates
+
+    def load_data(self) -> pd.DataFrame:
+        """
+        Load data from the configured data source.
+        
+        Returns:
+            DataFrame containing the loaded data or None if loading fails
+        """
+        # Check if input file is specified in config
+        self.logger.debug(f"Loading data with config: {self.config}")
+        
+        # Check for input file in different possible config structures
+        input_file = None
+        
+        # Try direct paths.input_file
+        if 'paths' in self.config and 'input_file' in self.config['paths']:
+            input_file = self.config['paths']['input_file']
+            self.logger.debug(f"Found input_file in paths: {input_file}")
+        
+        # Try data.sources[0].file_path
+        elif 'data' in self.config and 'sources' in self.config['data'] and self.config['data']['sources']:
+            data_sources = self.config['data']['sources']
+            if isinstance(data_sources, list) and len(data_sources) > 0 and 'file_path' in data_sources[0]:
+                input_file = data_sources[0]['file_path']
+                self.logger.debug(f"Found input_file in data.sources: {input_file}")
+        
+        if not input_file:
+            self.logger.error("No input file specified in configuration")
+            self.logger.debug(f"Config keys: {list(self.config.keys())}")
+            if 'paths' in self.config:
+                self.logger.debug(f"Paths config: {self.config['paths']}")
+            print("ERROR: No input file specified in configuration")
+            return None
+            
+        try:
+            # If load_from_file returns True, self.data should be populated
+            self.logger.info(f"Loading data from file: {input_file}")
+            print(f"Loading data from file: {input_file}")
+            success = self.load_from_file(input_file)
+            if not success:
+                self.logger.error(f"Failed to load data from {input_file}")
+                print(f"ERROR: Failed to load data from {input_file}")
+                return None
+                
+            # Log data info
+            if self.data is not None:
+                self._log_data_info(self.data)
+                print(f"Successfully loaded {len(self.data)} rows of data from {input_file}")
+                self.logger.info(f"Successfully loaded {len(self.data)} rows of data")
+            
+            return self.data
+            
+        except Exception as e:
+            self.logger.error(f"Error loading data: {e}")
+            import traceback
+            self.logger.debug(traceback.format_exc())
+            print(f"ERROR: {e}")
+            return None
+
+    def preprocess_data(self, data: pd.DataFrame) -> pd.DataFrame:
+        """
+        Preprocess data for trading.
+        
+        Args:
+            data: Raw data loaded from file
+            
+        Returns:
+            Preprocessed data ready for trading
+        """
+        if data is None or data.empty:
+            self.logger.warning("No data to preprocess")
+            print("WARNING: No data to preprocess")
+            return data
+            
+        # Make a copy to avoid modifying the original data
+        processed = data.copy()
+        print(f"Preprocessing {len(data)} rows of data...")
+        
+        try:
+            # Calculate mid prices if not already present
+            if 'mid' not in processed.columns and 'ask' in processed.columns and 'bid' in processed.columns:
+                print("Calculating mid prices from bid/ask...")
+                normal_spread = self.config.get('trading', {}).get('normal_spread', 0.20)
+                processed = self.calculate_mid_prices(processed, normal_spread)
+                
+            # Extract trading dates if not already set
+            if not self.trading_dates:
+                start_date = self.config.get('dates', {}).get('start_date')
+                end_date = self.config.get('dates', {}).get('end_date')
+                
+                if start_date and isinstance(start_date, str):
+                    start_date = datetime.strptime(start_date, "%Y-%m-%d")
+                if end_date and isinstance(end_date, str):
+                    end_date = datetime.strptime(end_date, "%Y-%m-%d")
+                    
+                # Get all dates in the data
+                if 'DataDate' in processed.columns:
+                    print("Extracting and sorting trading dates...")
+                    all_dates = processed['DataDate'].unique()
+                    # Filter to dates within the configured range
+                    if start_date:
+                        all_dates = [d for d in all_dates if d >= start_date]
+                    if end_date:
+                        all_dates = [d for d in all_dates if d <= end_date]
+                    # Sort dates
+                    self.trading_dates = sorted(all_dates)
+                    print(f"Found {len(self.trading_dates)} trading dates in the dataset")
+                    
+            # Extract underlying data if needed
+            if self.underlying_data is None:
+                print("Extracting underlying price data...")
+                self._extract_underlying_data(processed)
+                
+            self.logger.info(f"Data preprocessing completed: {len(processed)} rows")
+            print(f"Data preprocessing completed: {len(processed)} rows")
+            return processed
+            
+        except Exception as e:
+            self.logger.error(f"Error preprocessing data: {e}")
+            import traceback
+            self.logger.debug(traceback.format_exc())
+            print(f"ERROR during preprocessing: {e}")
+            return data  # Return original data if preprocessing fails

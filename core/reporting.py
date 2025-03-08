@@ -21,35 +21,43 @@ from matplotlib.backends.backend_agg import FigureCanvasAgg as FigureCanvas
 
 class ReportingSystem:
     """
-    Generates reports and visualizations for trading performance.
+    Reporting system for generating trading system reports.
     
-    This class handles creating HTML reports, generating charts, and
-    calculating performance metrics for trading strategies.
+    This class handles the generation of various reports including:
+    - HTML reports with interactive visualizations
+    - CSV output files
+    - Business logic verification files with detailed trading metrics
     """
     
     def __init__(
         self, 
         config: Dict[str, Any],
         portfolio: Optional[Any] = None,
-        logger: Optional[logging.Logger] = None
+        logger: Optional[logging.Logger] = None,
+        trading_engine: Optional[Any] = None
     ):
         """
-        Initialize the ReportingSystem.
+        Initialize the reporting system.
         
         Args:
             config: Configuration dictionary
-            portfolio: Portfolio instance for performance tracking
-            logger: Logger instance
+            portfolio: Optional portfolio instance
+            logger: Optional logger instance
+            trading_engine: Optional reference to the TradingEngine instance
         """
-        self.logger = logger or logging.getLogger('trading_engine')
         self.config = config
         self.portfolio = portfolio
-        
-        # Extract configuration settings
-        self.output_dir = config.get('output_dir', 'reports')
+        self.logger = logger or logging.getLogger('reporting')
+        self.trading_engine = trading_engine  # Store reference to trading engine
         
         # Create output directory if it doesn't exist
+        self.output_dir = config.get('paths', {}).get('output_dir', 'output')
         os.makedirs(self.output_dir, exist_ok=True)
+        
+        # Create verification files directory if needed
+        verification_dir = config.get('paths', {}).get('verification_output_dir')
+        if verification_dir:
+            os.makedirs(verification_dir, exist_ok=True)
     
     def generate_html_report(
         self, 
@@ -421,3 +429,280 @@ class ReportingSystem:
         self.logger.info(f"Performance metrics saved to {file_path}")
         
         return file_path
+    
+    def generate_business_logic_verification_file(self, portfolio, date, pre_trade=False):
+        """
+        Generate a detailed output file for business logic verification in the required format.
+        
+        Args:
+            portfolio: Portfolio object containing all position data
+            date: Current date for the report
+            pre_trade: Whether this is a pre-trade or post-trade report
+        
+        Returns:
+            str: Path to the generated file
+        """
+        report_type = "PRE-TRADE" if pre_trade else "POST-TRADE"
+        date_str = date.strftime("%Y-%m-%d")
+        
+        # Initialize the output content
+        output = io.StringIO()
+        
+        # Header Section
+        output.write("=" * 60 + "\n")
+        output.write(f"{report_type} Summary [{date_str}]:\n")
+        
+        # Daily P&L Breakdown
+        daily_return = portfolio.get_daily_return()
+        daily_return_pct = portfolio.get_daily_return_percent()
+        option_pnl = portfolio.get_option_pnl()
+        hedge_pnl = portfolio.get_hedge_pnl()
+        
+        output.write(f"Daily P&L: ${daily_return:.2f} ({daily_return_pct:.2%})\n")
+        output.write(f"  Option PnL: ${option_pnl:.2f}\n")
+        output.write(f"  Hedge PnL: ${hedge_pnl:.2f}\n")
+        
+        # Trade and Position Information
+        open_trades = len(portfolio.get_open_positions())
+        position_exposure = portfolio.get_total_position_exposure()
+        nlv = portfolio.get_net_liquidation_value()
+        cash_balance = portfolio.get_cash_balance()
+        total_liability = portfolio.get_total_liability()
+        self_hedge = portfolio.get_hedge_value()
+        
+        output.write(f"Open Trades: {open_trades}\n")
+        output.write(f"Total Position Exposure: {position_exposure:.1%} of NLV\n")
+        output.write(f"Net Liq: ${nlv:.2f}\n")
+        output.write(f"  Cash Balance: ${cash_balance:.2f}\n")
+        output.write(f"  Total Liability: ${total_liability:.2f}\n")
+        output.write(f"  Self Hedge (Hedge PnL): ${self_hedge:.2f}\n")
+        
+        # Margin Information
+        total_margin = portfolio.get_total_margin_requirement()
+        available_margin = portfolio.get_available_margin()
+        margin_based_leverage = portfolio.get_margin_based_leverage()
+        
+        output.write(f"Total Margin Requirement: ${total_margin:.2f}\n")
+        output.write(f"Available Margin: ${available_margin:.2f}\n")
+        output.write(f"Margin-Based Leverage: {margin_based_leverage:.2f}\n")
+        
+        # Portfolio Greek Risk Metrics
+        option_delta = portfolio.get_option_delta()
+        hedge_delta = portfolio.get_hedge_delta()
+        total_delta = portfolio.get_total_delta()
+        gamma = portfolio.get_gamma()
+        theta = portfolio.get_theta()
+        vega = portfolio.get_vega()
+        
+        output.write("\nPortfolio Greek Risk:\n")
+        output.write(f"  Option Delta: {option_delta:.3f} (${option_delta * 100 * 100:.2f})\n")
+        output.write(f"  Hedge Delta: {hedge_delta:.3f} (${hedge_delta * 100 * 100:.2f})\n")
+        output.write(f"  Total Delta: {total_delta:.3f} (${total_delta * 100 * 100:.2f})\n")
+        output.write(f"  Gamma: {gamma:.6f} (${gamma * 100 * 100:.2f} per 1% move)\n")
+        output.write(f"  Theta: ${theta:.2f} per day\n")
+        output.write(f"  Vega: ${vega:.2f} per 1% IV\n")
+        
+        # Rolling Metrics
+        metrics = portfolio.get_rolling_metrics()
+        
+        output.write("\nRolling Metrics:\n")
+        output.write(f"  Expanding Window (all obs, min 5 required): Sharpe: {metrics.get('expanding_sharpe', 0):.2f}, " +
+                    f"Volatility: {metrics.get('expanding_volatility', 0):.2%}\n")
+        output.write(f"  Short Window (21 days, rolling): Sharpe: {metrics.get('short_sharpe', 0):.2f}, " +
+                    f"Volatility: {metrics.get('short_volatility', 0):.2%}\n")
+        output.write(f"  Medium Window (63 days, rolling): Sharpe: {metrics.get('medium_sharpe', 0):.2f}, " +
+                    f"Volatility: {metrics.get('medium_volatility', 0):.2%}\n")
+        output.write(f"  Long Window (252 days, rolling): Sharpe: {metrics.get('long_sharpe', 0):.2f}, " +
+                    f"Volatility: {metrics.get('long_volatility', 0):.2%}\n")
+        
+        output.write("-" * 50 + "\n")
+        
+        # Open Trades Table
+        open_positions = portfolio.get_open_positions()
+        if open_positions:
+            output.write("\nOpen Trades Table:\n")
+            output.write("-" * 120 + "\n")
+            output.write(f"{'Symbol':<15} {'Contracts':>10} {'Entry':>7} {'Current':>8} {'Value':>10} {'NLV%':>5} {'Underlying':>10} " +
+                         f"{'Delta':>10} {'Gamma':>10} {'Theta':>10} {'Vega':>10} {'Margin':>10} {'DTE':>5}\n")
+            output.write("-" * 120 + "\n")
+            
+            total_value = 0
+            total_margin = 0
+            
+            for pos in open_positions:
+                symbol = pos.get_symbol() if hasattr(pos, 'get_symbol') else pos.symbol
+                contracts = pos.get_quantity() if hasattr(pos, 'get_quantity') else pos.contracts
+                entry_price = pos.get_entry_price() if hasattr(pos, 'get_entry_price') else pos.avg_entry_price
+                current_price = pos.get_current_price() if hasattr(pos, 'get_current_price') else pos.current_price
+                
+                # Calculate position value
+                if hasattr(pos, 'get_market_value'):
+                    value = pos.get_market_value()
+                else:
+                    # Check if this is an option position
+                    is_option = hasattr(pos, 'option_symbol') or hasattr(pos, 'strike') or hasattr(pos, 'expiration')
+                    value = current_price * contracts * (100 if is_option else 1)
+                
+                nlv_pct = value / nlv * 100 if nlv else 0
+                
+                # Get underlying price
+                if hasattr(pos, 'get_underlying_price'):
+                    underlying_price = pos.get_underlying_price()
+                else:
+                    underlying_price = pos.underlying_price if hasattr(pos, 'underlying_price') else 0
+                
+                # Get delta
+                if hasattr(pos, 'get_delta'):
+                    delta = pos.get_delta()
+                else:
+                    delta = pos.current_delta if hasattr(pos, 'current_delta') else 0
+                
+                # Get gamma
+                if hasattr(pos, 'get_gamma'):
+                    gamma = pos.get_gamma()
+                else:
+                    gamma = pos.current_gamma if hasattr(pos, 'current_gamma') else 0
+                
+                # Get theta
+                if hasattr(pos, 'get_theta'):
+                    theta = pos.get_theta()
+                else:
+                    theta = pos.current_theta if hasattr(pos, 'current_theta') else 0
+                
+                # Get vega
+                if hasattr(pos, 'get_vega'):
+                    vega = pos.get_vega()
+                else:
+                    vega = pos.current_vega if hasattr(pos, 'current_vega') else 0
+                
+                # Get margin requirement
+                if hasattr(pos, 'get_margin_requirement'):
+                    margin = pos.get_margin_requirement()
+                else:
+                    margin = 0
+                total_margin += margin
+                
+                # Get days to expiry
+                if hasattr(pos, 'get_days_to_expiry'):
+                    dte = pos.get_days_to_expiry()
+                else:
+                    dte = pos.days_to_expiry if hasattr(pos, 'days_to_expiry') else 0
+                
+                # Write position data
+                output.write(f"{symbol:<15} {contracts:>10} ${entry_price:>5.2f} ${current_price:>6.2f} " +
+                           f"${value:>8.2f} {nlv_pct:>4.1f}% ${underlying_price:>8.2f} " +
+                           f"{delta:>9.3f} {gamma:>9.6f} ${theta:>8.2f} ${vega:>8.2f} ${margin:>8.0f} {dte:>5}\n")
+                
+                total_value += value
+            
+            # Write table footer with totals
+            output.write("-" * 120 + "\n")
+            output.write(f"{'TOTAL':<15} {'':<10} {'':<7} {'':<8} ${total_value:>8.2f} {(total_value / nlv * 100) if nlv else 0:>4.1f}%{'':<31}${total_margin:>8.0f}\n")
+            output.write("-" * 120 + "\n")
+        
+        output.write("=" * 60 + "\n")
+        
+        # Logging and Manager Output section - Fixed to properly get the log file path
+        # Try to access the log file through various possible methods
+        log_file_path = None
+        
+        # Method 1: Try to get it from a trading_engine reference which might have the LoggingManager
+        if hasattr(self, 'trading_engine') and hasattr(self.trading_engine, 'logging_manager'):
+            log_file_path = self.trading_engine.logging_manager.get_log_file_path()
+        
+        # Method 2: Check if logger is actually a LoggingManager
+        elif hasattr(self, 'logger') and hasattr(self.logger, 'get_log_file_path'):
+            log_file_path = self.logger.get_log_file_path()
+        
+        # Method 3: Check if we can access the log file directly from the logger
+        elif hasattr(self, 'logger') and hasattr(self.logger, 'handlers'):
+            for handler in self.logger.handlers:
+                if isinstance(handler, logging.FileHandler) and hasattr(handler, 'baseFilename'):
+                    log_file_path = handler.baseFilename
+                    break
+        
+        if log_file_path and os.path.exists(log_file_path):
+            try:
+                with open(log_file_path, 'r') as log_file:
+                    log_content = log_file.read()
+                    # Filter log entries for current date
+                    log_date_str = date.strftime("%Y-%m-%d")
+                    log_lines = [line for line in log_content.split('\n') if log_date_str in line]
+                    
+                    # Include key log entries based on tags
+                    trade_manager_logs = [line for line in log_lines if "[TradeManager]" in line]
+                    risk_scaling_logs = [line for line in log_lines if "[Risk Scaling]" in line]
+                    portfolio_logs = [line for line in log_lines if "[Portfolio Rebalancer]" in line]
+                    
+                    if trade_manager_logs:
+                        output.write("\n[TradeManager] Logs:\n")
+                        for line in trade_manager_logs:
+                            output.write(f"{line}\n")
+                    
+                    if risk_scaling_logs:
+                        output.write("\n[Risk Scaling] Logs:\n")
+                        for line in risk_scaling_logs:
+                            output.write(f"{line}\n")
+                    
+                    if portfolio_logs:
+                        output.write("\n[Portfolio Rebalancer] Logs:\n")
+                        for line in portfolio_logs:
+                            output.write(f"{line}\n")
+            except Exception as e:
+                self.logger.error(f"Error reading log file: {e}")
+        
+        # Write the output file
+        output_dir = self.get_output_directory()
+        file_prefix = "pre_trade" if pre_trade else "post_trade"
+        output_file_path = os.path.join(output_dir, f"{file_prefix}_summary_{date_str}.txt")
+        
+        with open(output_file_path, 'w') as f:
+            f.write(output.getvalue())
+        
+        return output_file_path
+    
+    def run_reports(self, portfolio, engine, current_date=None):
+        """
+        Generate all reports including HTML report and business logic verification files.
+        
+        Args:
+            portfolio: Portfolio object
+            engine: Trading engine instance
+            current_date: Current date for the report (defaults to today)
+            
+        Returns:
+            dict: Paths to generated reports
+        """
+        result = {}
+        
+        # ... existing code to generate HTML and other reports ...
+        
+        # Generate business logic verification files
+        if current_date:
+            pre_trade_file = self.generate_business_logic_verification_file(
+                portfolio, current_date, pre_trade=True)
+            post_trade_file = self.generate_business_logic_verification_file(
+                portfolio, current_date, pre_trade=False)
+            
+            result['pre_trade_file'] = pre_trade_file
+            result['post_trade_file'] = post_trade_file
+        
+        return result
+    
+    def get_output_directory(self) -> str:
+        """
+        Get the output directory for reports and verification files.
+        
+        Returns:
+            str: Path to the output directory
+        """
+        # First try to get the verification_output_dir if it exists
+        verification_dir = self.config.get('paths', {}).get('verification_output_dir')
+        if verification_dir:
+            os.makedirs(verification_dir, exist_ok=True)
+            return verification_dir
+            
+        # Otherwise use the general output_dir
+        output_dir = self.config.get('paths', {}).get('output_dir', 'output')
+        os.makedirs(output_dir, exist_ok=True)
+        return output_dir

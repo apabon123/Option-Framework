@@ -1,0 +1,40 @@
+============================================================
+PRE-TRADE Summary [2024-01-22]:
+Daily P&L: $-120.50 (-0.12%)
+  Option PnL: $0.00
+  Hedge PnL: $0.00
+Open Trades: 2
+Total Position Exposure: 0.2% of NLV
+Net Liq: $99908.00
+  Cash Balance: $100062.00
+  Total Liability: $154.00
+  Self Hedge (Hedge PnL): $0.00
+Total Margin Requirement: $154.00
+Available Margin: $99754.00
+Margin-Based Leverage: 0.00
+
+Portfolio Greek Risk:
+  Option Delta: -0.166 ($-1662.00)
+  Hedge Delta: 0.000 ($0.00)
+  Total Delta: -0.166 ($-1662.00)
+  Gamma: -0.014700 ($-147.00 per 1% move)
+  Theta: $20.67 per day
+  Vega: $-62.45 per 1% IV
+
+Rolling Metrics:
+  Expanding Window (all obs, min 5 required): Sharpe: -3.05, Volatility: 0.64%
+  Short Window (21 days, rolling): Sharpe: -3.05, Volatility: 0.64%
+  Medium Window (63 days, rolling): Sharpe: -3.05, Volatility: 0.64%
+  Long Window (252 days, rolling): Sharpe: -3.05, Volatility: 0.64%
+--------------------------------------------------
+
+Open Trades Table:
+------------------------------------------------------------------------------------------------------------------------
+Symbol           Contracts   Entry  Current      Value  NLV% Underlying      Delta      Gamma      Theta       Vega     Margin   DTE
+------------------------------------------------------------------------------------------------------------------------
+SPY240328C00518000          1 $ 0.50 $  0.70 $   69.50  0.1% $  483.45     0.076  0.006900 $   -9.67 $   29.31 $       0    66
+SPY240328C00516000          1 $ 0.56 $  0.84 $   84.50  0.1% $  483.45     0.090  0.007800 $  -11.00 $   33.15 $       0    66
+------------------------------------------------------------------------------------------------------------------------
+TOTAL                                       $  154.00  0.2%                               $       0
+------------------------------------------------------------------------------------------------------------------------
+============================================================

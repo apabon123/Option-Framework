@@ -150,6 +150,9 @@ class Position:
         old_contracts = self.contracts
         self.contracts = total_contracts
         
+        # Set current price to execution price
+        self.current_price = price
+        
         # Log the transaction
         if self.logger:
             self.logger.info(f"[Position] Added {quantity} contracts of {self.symbol} at ${price:.2f}")

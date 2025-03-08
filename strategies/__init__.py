@@ -7,6 +7,7 @@ that can be used with the trading engine.
 
 # Import strategies so they're available directly from the package
 from .example_strategy import SimpleOptionStrategy
+from .theta_strategy import ThetaDecayStrategy
 
 # Export the strategy classes
-__all__ = ['SimpleOptionStrategy']
+__all__ = ['SimpleOptionStrategy', 'ThetaDecayStrategy']

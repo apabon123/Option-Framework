@@ -10,8 +10,9 @@ import logging
 import traceback
 import pandas as pd
 import numpy as np
+import json
 from datetime import datetime, timedelta
-from typing import Dict, List, Optional, Union, Any, Tuple
+from typing import Dict, List, Optional, Union, Any, Tuple, Callable
 import io
 import sys
 
@@ -389,15 +390,19 @@ class TradingEngine:
         self.logging_manager = LoggingManager()
         self.logger = self.logging_manager.setup_logging(
             config_dict,
-            verbose_console=config_dict.get('verbose_console', True),
-            debug_mode=config_dict.get('debug_mode', False)
+            verbose_console=config_dict.get('verbose', False),
+            debug_mode=config_dict.get('debug', False)
         )
         
         # Store configuration
         self.config = config_dict
+        self.logger.debug(f"Configuration: {self.config}")
+        
+        # Initialize components
+        self.data_manager = DataManager(self.config, self.logger)
+        self.logger.debug(f"DataManager initialized with config: {self.config.get('paths', {})}")
         
         # Initialize other components later
-        self.data_manager = None
         self.data = None  # Will hold the processed data
         self.portfolio = None
         self.hedging_manager = None
@@ -440,7 +445,7 @@ class TradingEngine:
             self.margin_calculator = SPANMarginCalculator(self.logger)
         else:
             self.margin_calculator = MarginCalculator(self.logger)
-            
+        
         # Create hedging manager if hedging is enabled
         hedging_config = self.config.get('hedging', {})
         hedging_enabled = hedging_config.get('enabled', False)
@@ -454,7 +459,7 @@ class TradingEngine:
         else:
             self.hedging_manager = None
             self.logger.info("Hedging disabled")
-            
+        
         # Create reporting system if reporting is enabled
         reporting_config = self.config.get('reporting', {})
         reporting_enabled = reporting_config.get('enabled', True)
@@ -462,22 +467,15 @@ class TradingEngine:
         if reporting_enabled:
             self.reporting_system = ReportingSystem(
                 config=reporting_config,
-                logger=self.logger
+                portfolio=self.portfolio,
+                logger=self.logger,
+                trading_engine=self  # Pass a reference to the trading engine instance
             )
         else:
             self.reporting_system = None
-            
-        # Create data manager
-        data_config = self.config.get('data', {})
-        data_sources = data_config.get('sources', [])
         
-        if not data_sources:
-            self.logger.warning("No data sources specified in configuration")
-            
-        self.data_manager = DataManager(
-            config=data_config,
-            logger=self.logger
-        )
+        # Log completion
+        self.logger.info("Trading engine components initialized")
         
     def _create_strategy(self) -> Strategy:
         """
@@ -494,111 +492,253 @@ class TradingEngine:
         # For now, just return a base Strategy instance
         return Strategy(name=strategy_name, config=strategy_config, logger=self.logger)
         
-    def load_data(self) -> None:
+    def load_data(self) -> bool:
         """Load and preprocess data for trading."""
         if self.data_manager is None:
             self.logger.error("Data manager not initialized")
-            return
+            return False
             
         # Load data
         self.logger.info("Loading data...")
-        data = self.data_manager.load_data()
-        
-        if data is None or len(data) == 0:
-            self.logger.error("No data loaded")
-            return
+        try:
+            print("Attempting to load data file...")
+            data = self.data_manager.load_data()
             
-        # Preprocess data
-        self.logger.info("Preprocessing data...")
-        self.data = self.data_manager.preprocess_data(data)
-        
-        self.logger.info(f"Data loaded: {len(self.data)} rows, {self.data.columns.tolist()}")
+            if data is None or len(data) == 0:
+                self.logger.error("No data loaded")
+                print("ERROR: No data loaded from file")
+                return False
+                
+            # Preprocess data
+            print(f"Data loaded with {len(data)} rows. Preprocessing...")
+            self.logger.info("Preprocessing data...")
+            self.data = self.data_manager.preprocess_data(data)
+            
+            self.logger.info(f"Data loaded: {len(self.data)} rows, {self.data.columns.tolist()}")
+            print(f"Preprocessing complete - {len(self.data)} rows ready for trading")
+            return True
+        except Exception as e:
+            self.logger.error(f"Error in load_data: {e}")
+            import traceback
+            self.logger.debug(traceback.format_exc())
+            print(f"ERROR loading data: {e}")
+            return False
         
     def run_backtest(self) -> Dict[str, Any]:
         """
-        Run a backtest using the configured strategy.
+        Run the backtest over the specified date range.
         
         Returns:
-            dict: Backtest results
+            Dict[str, Any]: Dictionary containing backtest results
         """
-        # Check if data is loaded
-        if self.data is None or len(self.data) == 0:
-            self.logger.error("No data loaded for backtest")
-            return {"error": "No data loaded"}
+        # Initialize result tracking
+        results = {
+            'initial_value': self.portfolio.initial_capital,
+            'final_value': 0,
+            'total_return': 0,
+            'sharpe_ratio': 0,
+            'max_drawdown': 0,
+            'report_path': None
+        }
+        
+        # Get the dates for the backtest
+        start_date = self.config.get('dates', {}).get('start_date')
+        end_date = self.config.get('dates', {}).get('end_date')
+        
+        # Convert string dates to datetime objects if necessary
+        if isinstance(start_date, str):
+            start_date = datetime.strptime(start_date, '%Y-%m-%d')
+        if isinstance(end_date, str):
+            end_date = datetime.strptime(end_date, '%Y-%m-%d')
             
-        # Check for required date column
-        if 'DataDate' not in self.data.columns:
-            self.logger.error("Data missing required 'DataDate' column")
-            return {"error": "Missing date column"}
+        # Generate trading dates in the specified range
+        trading_dates = self.data_manager.get_dates()
+        if not trading_dates:
+            self.logger.error("No trading dates available")
+            return results
             
+        # Filter by date range
+        if start_date:
+            trading_dates = [d for d in trading_dates if d >= start_date]
+        if end_date:
+            trading_dates = [d for d in trading_dates if d <= end_date]
+            
+        trading_dates = sorted(trading_dates)
+        
+        if not trading_dates:
+            self.logger.error("No trading dates in the specified range")
+            return results
+            
+        # Print backtest details
+        print(f"Backtest range: {trading_dates[0].strftime('%Y-%m-%d')} to {trading_dates[-1].strftime('%Y-%m-%d')}")
+        print(f"Total trading days: {len(trading_dates)}")
+        
         self.logger.info(f"Starting backtest with strategy: {self.strategy.name}")
         self.logger.info(f"Initial capital: ${self.portfolio.initial_capital:,.2f}")
         
-        try:
-            # Get unique dates for processing
-            self.data['DataDate'] = pd.to_datetime(self.data['DataDate'])
-            unique_dates = self.data['DataDate'].dt.date.unique()
-            unique_dates.sort()
+        # Process each trading day
+        total_dates = len(trading_dates)
+        for i, current_date in enumerate(trading_dates):
+            # Print progress every 5% or every day if total days <= 20
+            if total_dates <= 20 or i % max(1, int(total_dates * 0.05)) == 0:
+                progress_pct = (i / total_dates) * 100
+                print(f"Progress: {i}/{total_dates} days ({progress_pct:.1f}%) - Processing {current_date.strftime('%Y-%m-%d')}")
             
-            total_days = len(unique_dates)
-            self.logger.info(f"Backtest period: {unique_dates[0]} to {unique_dates[-1]} ({total_days} trading days)")
+            # Process the current trading day
+            self._process_trading_day(current_date)
             
-            # Process each trading day
-            processed_days = 0
-            for date in unique_dates:
-                # Convert date to datetime for filtering
-                current_date = pd.to_datetime(date)
+        # Calculate backtest results
+        final_value = self.portfolio.get_portfolio_value()
+        initial_value = self.portfolio.initial_capital
+        
+        # Calculate total return
+        if initial_value > 0:
+            total_return = (final_value - initial_value) / initial_value
+        else:
+            total_return = 0
+            
+        # Calculate other metrics
+        rolling_metrics = self.calculate_rolling_metrics()
+        
+        # Update results
+        results['final_value'] = final_value
+        results['total_return'] = total_return
+        results['sharpe_ratio'] = rolling_metrics.get('sharpe_ratio', 0)
+        results['max_drawdown'] = rolling_metrics.get('max_drawdown', 0)
+        
+        # Generate report
+        if hasattr(self, 'reporting_system') and self.reporting_system:
+            print("Generating HTML report...")
+            self.logger.info("===========================================")
+            self.logger.info(f"Generating HTML report '{self.strategy.name}_backtest'...")
+            
+            try:
+                report_path = self.reporting_system.generate_html_report(
+                    self.portfolio,
+                    self.strategy.name,
+                    self.strategy.config
+                )
                 
-                # Log progress periodically
-                processed_days += 1
-                if processed_days % 1 == 0 or processed_days == total_days:
-                    progress_pct = processed_days / total_days * 100
-                    self.logger.info(f"Progress: {processed_days}/{total_days} days ({progress_pct:.1f}%) - Processing {current_date.strftime('%Y-%m-%d')} - DT.05")
+                results['report_path'] = report_path
+                
+                self.logger.info(f"Report saved to {report_path}")
+                self.logger.info("===========================================")
+            except Exception as e:
+                self.logger.error(f"Error generating report: {e}")
+                import traceback
+                self.logger.debug(traceback.format_exc())
+            
+        # Log final results
+        self.logger.info("===========================================")
+        self.logger.info(f"Backtest completed. Final value: ${final_value:,.2f}")
+        self.logger.info(f"Total return: {total_return:.2%}")
+        
+        print(f"Backtest complete - Final value: ${final_value:,.2f}")
+        
+        # Enhance reporting output to include verification files
+        if hasattr(self, 'reporting_system') and self.reporting_system:
+            try:
+                final_report_data = self.reporting_system.run_reports(self.portfolio, self, self.current_date)
+                
+                # Add verification files to results
+                if 'pre_trade_file' in final_report_data:
+                    results['pre_trade_verification_file'] = final_report_data['pre_trade_file']
+                if 'post_trade_file' in final_report_data:
+                    results['post_trade_verification_file'] = final_report_data['post_trade_file']
                     
-                # Process the current trading day
-                self._process_trading_day(current_date)
+                # Log the verification file paths
+                if 'pre_trade_verification_file' in results:
+                    self.logger.info(f"Pre-trade verification file: {results['pre_trade_verification_file']}")
+                if 'post_trade_verification_file' in results:
+                    self.logger.info(f"Post-trade verification file: {results['post_trade_verification_file']}")
+            except Exception as e:
+                self.logger.error(f"Error generating final reports: {e}")
+                self.logger.debug(traceback.format_exc())
+            
+        return results
+
+    def _process_trading_day(self, current_date: datetime) -> None:
+        """
+        Process a single trading day.
+        
+        Args:
+            current_date: The trading date to process
+        """
+        # Store the current date for later use
+        self.current_date = current_date
+        
+        # Get the daily data for this date
+        daily_data = self.data_manager.get_data_for_date(current_date)
+        
+        if daily_data is None or daily_data.empty:
+            self.logger.warning(f"No data for {current_date.strftime('%Y-%m-%d')}, skipping day")
+            return
+            
+        # Log the current day being processed
+        self.logger.info(f"\n\n")
+        self.logger.info(f"==================================================")
+        self.logger.info(f"TRADING DAY: {current_date.strftime('%Y-%m-%d')}")
+        self.logger.info(f"==================================================")
+        
+        # ----- PRE-TRADE PHASE -----
+        # Update existing positions without changing portfolio exposure
+        self._update_positions(current_date, daily_data)
+        
+        # Pre-trade summary and market analysis
+        self._log_pre_trade_summary(current_date, daily_data)
+        
+        # ----- TRADING ACTIVITIES PHASE -----
+        self.logger.info(f"\n")
+        self.logger.info(f"==================================================")
+        self.logger.info(f"TRADING ACTIVITIES [{current_date.strftime('%Y-%m-%d')}]:")
+        self.logger.info(f"==================================================")
+        
+        # Execute trading activities (generates signals, evaluates, executes)
+        self._execute_trading_activities(current_date, daily_data)
+        
+        # ----- POST-TRADE PHASE -----
+        # Post-trade summary
+        self._log_post_trade_summary(current_date)
+        
+        # Update portfolio statistics and record daily metrics
+        try:
+            # Try to call record_daily_metrics if it exists
+            if hasattr(self.portfolio, 'record_daily_metrics'):
+                self.portfolio.record_daily_metrics(current_date)
+            else:
+                # Otherwise just log the current portfolio value
+                portfolio_value = self.portfolio.get_portfolio_value()
+                self.logger.info(f"Portfolio value on {current_date.strftime('%Y-%m-%d')}: ${portfolio_value:,.2f}")
                 
-            # Calculate final performance metrics
-            performance_metrics = self.portfolio.get_performance_metrics()
-            
-            # Generate report if reporting is enabled
-            report_path = None
-            if self.reporting_system:
+                # Simple implementation to record metrics if custom method doesn't exist
+                if not hasattr(self.portfolio, 'daily_metrics'):
+                    self.portfolio.daily_metrics = {}
+                
+                # Determine cash value safely
                 try:
-                    report_path = self.reporting_system.generate_html_report(
-                        self.portfolio.equity_history,
-                        performance_metrics,
-                        self.portfolio.transactions,
-                        f"{self.strategy.name}_backtest"
-                    )
-                except Exception as e:
-                    self.logger.error(f"Error generating report: {e}")
-                    self.logger.error(traceback.format_exc())
-            
-            # Compile results
-            results = {
-                "initial_capital": self.portfolio.initial_capital,
-                "final_value": self.portfolio.get_portfolio_value(),
-                "total_return": performance_metrics.get('return', 0),
-                "sharpe_ratio": performance_metrics.get('sharpe_ratio', 0),
-                "max_drawdown": performance_metrics.get('max_drawdown', 0),
-                "volatility": performance_metrics.get('volatility', 0),
-                "cagr": performance_metrics.get('cagr', 0),
-                "transaction_count": len(self.portfolio.transactions),
-                "report_path": report_path
-            }
-            
-            self.logger.info(f"Backtest completed. Final value: ${results['final_value']:,.2f}")
-            self.logger.info(f"Total return: {results['total_return']:.2%}")
-            
-            return results
-            
+                    cash = self.portfolio.cash
+                except AttributeError:
+                    # If 'cash' doesn't exist, use initial_capital as a fallback
+                    cash = self.portfolio.initial_capital
+                    
+                # Store the metrics
+                self.portfolio.daily_metrics[current_date] = {
+                    'date': current_date,
+                    'portfolio_value': portfolio_value,
+                    'cash': cash
+                }
         except Exception as e:
-            # Handle any unexpected errors during backtest
-            self.logger.error(f"Error during backtest: {e}")
-            self.logger.error(traceback.format_exc())
-            return {"error": str(e)}
-            
+            self.logger.warning(f"Error recording daily metrics: {e}")
+            print(f"Warning: {e}")
+            # Continue processing even if this fails
+
+        # Log completion of day processing
+        self.logger.info(f"\n")
+        self.logger.info(f"==================================================")
+        self.logger.info(f"END OF TRADING DAY: {current_date.strftime('%Y-%m-%d')}")
+        self.logger.info(f"==================================================")
+        self.logger.info(f"\n")
+
     def _log_pre_trade_summary(self, current_date: datetime, daily_data: pd.DataFrame) -> None:
         """
         Log pre-trade portfolio summary after marking-to-market.
@@ -608,6 +748,7 @@ class TradingEngine:
             daily_data: Daily market data
         """
         if not self.portfolio.positions:
+            self.logger.info("PRE-TRADE Summary: No open positions")
             return
             
         portfolio_metrics = self.portfolio.get_portfolio_metrics()
@@ -616,85 +757,208 @@ class TradingEngine:
         # Log "PRE-TRADE Summary" header with date
         self.logger.info("==================================================")
         self.logger.info(f"PRE-TRADE Summary [{current_date.strftime('%Y-%m-%d')}]:")
+        self.logger.info("==================================================")
         
-        # Calculate daily return
+        # Log position updates (moved from _update_positions)
+        if hasattr(self, 'pre_update_values'):
+            for symbol, position in self.portfolio.positions.items():
+                new_value = position.current_price * position.contracts * 100 if isinstance(position, OptionPosition) else position.current_price * position.contracts
+                change = new_value - self.pre_update_values.get(symbol, 0)
+                
+                self.logger.info(f"Position: {symbol} - ${new_value:.2f} (change: ${change:.2f})")
+        
+        # Calculate and log daily return at the top of the summary
+        # We'll look for the most recent daily return
+        daily_pnl = 0
+        daily_return_pct = 0
+        
         if hasattr(self.portfolio, 'daily_returns') and self.portfolio.daily_returns:
-            latest_return = self.portfolio.daily_returns[-1]
-            daily_pnl = latest_return.get('pnl', 0)
-            daily_return_pct = latest_return.get('return', 0)
-            self.logger.info(f"Daily P&L: ${daily_pnl:.0f} ({daily_return_pct:.2%})")
+            # Find the most recent return entry
+            for return_entry in reversed(self.portfolio.daily_returns):
+                if return_entry.get('date') and return_entry.get('date') < current_date:
+                    daily_pnl = return_entry.get('pnl', 0)
+                    daily_return_pct = return_entry.get('return', 0)
+                    # If the most recent entry has a date earlier than today, use it
+                    break
             
-            # Log option and hedge PnL
-            option_pnl = latest_return.get('unrealized_pnl_change', 0)
-            hedge_pnl = latest_return.get('realized_pnl', 0)  # Using realized_pnl as hedge_pnl
-            self.logger.info(f"  Option PnL: ${option_pnl:.0f}")
-            self.logger.info(f"  Hedge PnL: ${hedge_pnl:.0f}")
+            # Log daily P&L info
+            self.logger.info(f"Daily P&L: ${daily_pnl:,.2f} ({daily_return_pct:.2%})")
+            
+            # Also log option and hedge PnL components if available
+            if len(self.portfolio.daily_returns) > 0:
+                latest_return = None
+                # Find the most recent return entry
+                for entry in reversed(self.portfolio.daily_returns):
+                    if entry.get('date') and entry.get('date') < current_date:
+                        latest_return = entry
+                        break
+                
+                if latest_return:
+                    option_pnl = latest_return.get('unrealized_pnl_change', 0)
+                    hedge_pnl = latest_return.get('realized_pnl', 0)  # Using realized_pnl as hedge_pnl
+                    self.logger.info(f"  Option PnL: ${option_pnl:,.2f}")
+                    self.logger.info(f"  Hedge PnL: ${hedge_pnl:,.2f}")
         
         # Portfolio position info
         self.logger.info(f"Open Trades: {len(self.portfolio.positions)}")
         
-        # Calculate exposure
-        exposure_pct = portfolio_metrics['position_value'] / portfolio_metrics['portfolio_value'] if portfolio_metrics['portfolio_value'] > 0 else 0
+        # Calculate exposure using our enhanced method
+        exposure_pct = self.portfolio.get_total_position_exposure()
         self.logger.info(f"Total Position Exposure: {exposure_pct:.1%} of NLV")
-        self.logger.info(f"Net Liq: ${portfolio_metrics['portfolio_value']:.0f}")
-        self.logger.info(f"  Cash Balance: ${portfolio_metrics['cash_balance']:.0f}")
-        self.logger.info(f"  Total Liability: ${-portfolio_metrics['position_value']:.0f}")
         
-        # Add hedge info if available
-        if hasattr(self, 'hedging_manager') and self.hedging_manager:
-            hedge_pnl = latest_return.get('realized_pnl', 0)  # Using realized_pnl as hedge_pnl
-            self.logger.info(f"  Self Hedge (Hedge PnL): ${hedge_pnl:.0f}")
+        portfolio_value = portfolio_metrics['portfolio_value']
+        self.logger.info(f"Net Liq: ${portfolio_value:,.0f}")
+        self.logger.info(f"  Cash Balance: ${portfolio_metrics['cash_balance']:,.0f}")
+        
+        # Calculate liability using our enhanced method
+        total_liability = self.portfolio.get_total_liability()
+        self.logger.info(f"  Total Liability: ${total_liability:,.0f}")
         
         # Margin info
-        self.logger.info(f"Total Margin Requirement: ${portfolio_metrics['total_margin']:.0f}")
-        self.logger.info(f"Available Margin: ${portfolio_metrics['available_margin']:.0f}")
+        self.logger.info(f"Total Margin Requirement: ${portfolio_metrics['total_margin']:,.0f}")
+        self.logger.info(f"Available Margin: ${portfolio_metrics['available_margin']:,.0f}")
         self.logger.info(f"Margin-Based Leverage: {portfolio_metrics['current_leverage']:.2f}")
+        
+        # Add detailed margin section
+        self.logger.info("\nMargin Details:")
+        margin_type = "None"
+        if hasattr(self, 'margin_calculator'):
+            margin_type = self.margin_calculator.__class__.__name__
+        self.logger.info(f"  Margin Method: {margin_type}")
+        
+        # Add calculation details based on the margin type
+        if hasattr(self, 'margin_calculator'):
+            if isinstance(self.margin_calculator, OptionMarginCalculator):
+                self.logger.info("  Calculation: Option margin based on OCC rules")
+                self.logger.info(f"  OTM Margin Multiplier: {self.margin_calculator.otm_margin_multiplier:.2f}")
+            elif isinstance(self.margin_calculator, SPANMarginCalculator):
+                self.logger.info("  Calculation: SPAN risk-based margin")
+                self.logger.info(f"  Initial Margin: {self.margin_calculator.initial_margin_percentage:.1%} of notional")
+                self.logger.info(f"  Maintenance Margin: {self.margin_calculator.maintenance_margin_percentage:.1%} of notional")
+                self.logger.info(f"  Volatility Multiplier: {self.margin_calculator.volatility_multiplier:.2f}")
+                self.logger.info(f"  Hedge Credit Rate: {self.margin_calculator.hedge_credit_rate:.2f}")
+            else:
+                self.logger.info("  Calculation: Basic margin based on position value")
+                self.logger.info(f"  Max Leverage: {self.margin_calculator.max_leverage:.2f}")
         
         # Portfolio Greeks section
         self.logger.info("\nPortfolio Greek Risk:")
         
         # Option delta
-        self.logger.info(f"  Option Delta: {greeks['delta']:.3f} (${greeks['dollar_delta']:.2f})")
+        self.logger.info(f"  Option Delta: {greeks['delta']:.3f} (${greeks['dollar_delta']:,.2f})")
         
         # Hedge delta if available
         if hasattr(self, 'hedging_manager') and self.hedging_manager:
             hedge_delta = self.hedging_manager.current_hedge_delta if hasattr(self.hedging_manager, 'current_hedge_delta') else 0
             hedge_dollar_delta = self.hedging_manager.current_dollar_delta if hasattr(self.hedging_manager, 'current_dollar_delta') else 0
-            self.logger.info(f"  Hedge Delta: {hedge_delta:.3f} (${hedge_dollar_delta:.2f})")
+            self.logger.info(f"  Hedge Delta: {hedge_delta:.3f} (${hedge_dollar_delta:,.2f})")
             
             # Total delta (options + hedge)
             total_delta = greeks['delta'] + hedge_delta
             total_dollar_delta = greeks['dollar_delta'] + hedge_dollar_delta
-            self.logger.info(f"  Total Delta: {total_delta:.3f} (${total_dollar_delta:.2f})")
+            self.logger.info(f"  Total Delta: {total_delta:.3f} (${total_dollar_delta:,.2f})")
         
         # Other Greeks
-        self.logger.info(f"  Gamma: {greeks['gamma']:.6f} (${greeks['dollar_gamma']:.2f} per 1% move)")
-        self.logger.info(f"  Theta: ${greeks['dollar_theta']:.2f} per day")
-        self.logger.info(f"  Vega: ${greeks['dollar_vega']:.2f} per 1% IV")
+        self.logger.info(f"  Gamma: {greeks['gamma']:.6f} (${greeks['dollar_gamma']:,.2f} per 1% move)")
+        self.logger.info(f"  Theta: ${greeks['dollar_theta']:,.2f} per day")
+        self.logger.info(f"  Vega: ${greeks['dollar_vega']:,.2f} per 1% IV")
         
-        # Open trades table
+        # Open trades table with improved formatting
         self.logger.info("--------------------------------------------------")
         self.logger.info("\nOpen Trades Table:")
-        self.logger.info("-" * 120)
-        self.logger.info(f"{'Symbol':<20}{'Contracts':>10}{'Entry':>8}{'Current':>10}{'Value':>10}{'NLV%':>8}{'Underlying':>10}{'Delta':>10}{'DTE':>5}")
-        self.logger.info("-" * 120)
+        self.logger.info("-" * 140)
+        
+        # Modified header with better alignment
+        header = (
+            f"{'Symbol':<16} "
+            f"{'Contracts':>9} "
+            f"{'Entry':>8} "
+            f"{'Current':>8} "
+            f"{'Value':>9} "
+            f"{'NLV%':>6} "
+            f"{'Underlying':>10} "  
+            f"{'Delta':>8} "
+            f"{'Gamma':>9} "
+            f"{'Theta':>8} "
+            f"{'Vega':>8} "
+            f"{'Margin':>9} "
+            f"{'DTE':>5}"
+        )
+        self.logger.info(header)
+        self.logger.info("-" * 140)
         
         portfolio_value = portfolio_metrics['portfolio_value']
         for symbol, position in self.portfolio.positions.items():
             # Calculate position metrics
             is_option = isinstance(position, OptionPosition)
-            pos_value = position.current_price * position.contracts * (100 if is_option else 1)
+            
+            # Use entry price if current price is 0
+            price = position.current_price if position.current_price > 0 else position.avg_entry_price
+            pos_value = price * position.contracts * (100 if is_option else 1)
             pos_pct = pos_value / portfolio_value if portfolio_value > 0 else 0
             
-            # Format the position info line
-            self.logger.info(f"{symbol:<20}{position.contracts:>10d}${position.avg_entry_price:>6.2f}${position.current_price:>8.2f}${pos_value:>9.0f}{pos_pct:>7.1%}${position.underlying_price:>8.2f}{position.current_delta:>10.3f}{position.days_to_expiry if hasattr(position, 'days_to_expiry') else 0:>5d}")
+            # Get margin if available
+            margin = position.get_margin_requirement() if hasattr(position, 'get_margin_requirement') else 0
+            
+            # Format the position info line (with better spacing)
+            position_line = (
+                f"{symbol:<16} "
+                f"{position.contracts:>9d} "
+                f"${position.avg_entry_price:>6.2f} "
+                f"${price:>6.2f} "
+                f"${pos_value:>7,.0f} "
+                f"{pos_pct:>5.1%} "
+                f"${position.underlying_price:>8.2f} "
+                f"{position.current_delta:>8.3f} "
+                f"{position.current_gamma:>8.6f} "
+                f"${position.current_theta:>6.2f} "
+                f"${position.current_vega:>6.2f} "
+                f"${margin:>7,.0f} "
+                f"{position.days_to_expiry if hasattr(position, 'days_to_expiry') else 0:>5d}"
+            )
+            self.logger.info(position_line)
         
-        # Print table footer
-        self.logger.info("-" * 120)
-        self.logger.info(f"TOTAL{' ':>30}${self.portfolio.position_value:>9.0f}{exposure_pct:>7.1%}")
-        self.logger.info("-" * 120)
-        self.logger.info("==================================================")
+        # Print table footer with total position value
+        self.logger.info("-" * 140)
         
+        # Calculate total position value using our enhanced method
+        total_exposure = self.portfolio.get_total_position_exposure() * portfolio_value
+        total_margin = self.portfolio.get_margin_requirement() if hasattr(self.portfolio, 'get_margin_requirement') else 0
+        
+        # Format the total line with better spacing
+        total_line = (
+            f"{'TOTAL':<16} "
+            f"{'':<9} "
+            f"{'':<8} "
+            f"{'':<8} "
+            f"${total_exposure:>7,.0f} "
+            f"{exposure_pct:>5.1%} "
+            f"{'':<10} "
+            f"{'':<8} "
+            f"{'':<9} "
+            f"{'':<8} "
+            f"{'':<8} "
+            f"${total_margin:>7,.0f} "
+            f"{'':<5}"
+        )
+        self.logger.info(total_line)
+        self.logger.info("-" * 140)
+        
+        # Rolling metrics moved to post-trade summary only
+        
+        # Add the generation of the pre-trade verification file
+        if hasattr(self, 'reporting_system') and self.reporting_system:
+            try:
+                pre_trade_file = self.reporting_system.generate_business_logic_verification_file(
+                    self.portfolio, current_date, pre_trade=True)
+                self.logger.debug(f"Pre-trade verification file generated: {pre_trade_file}")
+            except Exception as e:
+                self.logger.error(f"Error generating pre-trade verification file: {e}")
+                self.logger.debug(traceback.format_exc())
+        
+        # Log completion of day processing
+        self.logger.info(f"[TradeManager] Completed processing for {current_date.strftime('%Y-%m-%d')}")
+    
     def _execute_trading_activities(self, current_date: datetime, daily_data: pd.DataFrame) -> None:
         """
         Execute all trading activities for the day including position management and signal execution.
@@ -703,8 +967,7 @@ class TradingEngine:
             current_date: Current trading date
             daily_data: Daily market data
         """
-        # Log start of trading activities
-        self.logger.info(f"[TradeManager] Processing trading activities for {current_date.strftime('%Y-%m-%d')}")
+        # Now the Trading Activities section header is directly handled by _process_trading_day method
         
         # Check debug flags
         if hasattr(self, 'hedging_manager') and self.hedging_manager:
@@ -713,26 +976,148 @@ class TradingEngine:
             if hasattr(self.hedging_manager, 'target_delta_ratio'):
                 self.logger.info(f"[DEBUG] Target Dollar Delta/NLV Ratio: {self.hedging_manager.target_delta_ratio:.4f}")
         
-        # Manage existing positions (check exit conditions)
-        # This includes checking for profit targets, stop losses, etc.
-        self._manage_positions(current_date, daily_data)
-        
-        # Generate trading signals from strategy
-        signals = self.strategy.generate_signals(current_date, daily_data)
-        
-        # Execute trading signals if any were generated
-        if signals:
-            self._execute_signals(signals, daily_data, current_date)
-            
+        # Execute Risk Scaling
+        self.logger.info("--------------------------------------------------")
+        self.logger.info("1. Risk Scaling:")
+        self.logger.info("--------------------------------------------------")
         # Calculate and store rolling performance metrics
         metrics = self.calculate_rolling_metrics()
         
         # Log risk scaling information if metrics are available
         if metrics and 'sharpe_ratio' in metrics:
-            self.logger.info(f"[Risk Scaling] Current Sharpe: {metrics.get('sharpe_ratio', 0):.2f}, Hist Mean: {metrics.get('mean_sharpe', 0):.2f}, z: {metrics.get('z_score', 0):.2f} => Scaling: {metrics.get('scaling_factor', 1.0):.2f}")
+            self.logger.info(f"[Risk Scaling] Current Sharpe: {metrics.get('sharpe_ratio', 0):.2f}, Hist Mean: {metrics.get('mean_sharpe', 0):.2f}, Std: {metrics.get('std_sharpe', 0):.2f}, NaN Count: {metrics.get('nan_count', 0)}, z: {metrics.get('z_score', 0):.2f} => Scaling: {metrics.get('scaling_factor', 1.0):.2f}")
             scaling_factor = metrics.get('scaling_factor', 1.0)
-            self.logger.info(f"  [Risk Scaling] {'High' if scaling_factor >= 0.8 else 'Low'} scaling factor ({scaling_factor:.2f}) - {'normal' if scaling_factor >= 0.8 else 'reduced'} position sizing")
+            scaling_desc = "Aggressive" if scaling_factor > 0.9 else "Moderate" if scaling_factor > 0.7 else "Cautious" if scaling_factor > 0.4 else "Defensive"
+            self.logger.info(f"  [Risk Scaling] {scaling_desc} scaling factor ({scaling_factor:.2f}) - {'aggressive' if scaling_factor > 0.9 else 'normal' if scaling_factor > 0.7 else 'cautious' if scaling_factor > 0.4 else 'minimal'} position sizing")
             
+            # Add Portfolio Rebalancer Analysis
+            portfolio_value = self.portfolio.get_portfolio_value()
+            margin_buffer = self.config.get('margin_management', {}).get('margin_buffer_pct', 0.1)
+            max_margin_allowed = portfolio_value * (1 - margin_buffer)
+            current_margin = self.portfolio.get_total_margin_requirement()
+            available_margin = max_margin_allowed - current_margin
+            
+            self.logger.info("[Portfolio Rebalancer Analysis]")
+            self.logger.info(f"  Current NLV: ${portfolio_value:.0f}")
+            self.logger.info(f"  Risk Scaling Factor: {scaling_factor:.2f}")
+            self.logger.info(f"  Maximum Margin Allowed: ${max_margin_allowed:.0f} (with {margin_buffer*100:.0f}% buffer)")
+            self.logger.info(f"  Current Margin: ${current_margin:.0f}")
+            self.logger.info(f"  Available Margin: ${available_margin:.0f} ({(available_margin/portfolio_value*100):.2f}% of NLV)")
+        else:
+            self.logger.info("Not enough history for risk scaling metrics")
+        
+        # Execute Portfolio Rebalancing
+        self.logger.info("--------------------------------------------------")
+        self.logger.info("2. Portfolio Rebalancing:")
+        self.logger.info("--------------------------------------------------")
+        # Manage existing positions (check exit conditions)
+        # This includes checking for profit targets, stop losses, etc.
+        self._manage_positions(current_date, daily_data)
+        
+        # Execute Trading Signals
+        self.logger.info("--------------------------------------------------")
+        self.logger.info("3. New Trades:")
+        self.logger.info("--------------------------------------------------")
+        
+        # Generate new signals from the strategy
+        signals = self.strategy.generate_signals(current_date, daily_data)
+        if signals:
+            self.logger.info(f"Generated {len(signals)} trading signals")
+            
+            # Execute signals
+            self._execute_signals(signals, daily_data, current_date)
+            
+            # Display New Trades Table if we added any new positions
+            if hasattr(self, 'today_added_positions') and self.today_added_positions:
+                self.logger.info("\nNew Trades Table:")
+                self.logger.info("-" * 100)
+                header = (
+                    f"{'Symbol':<16} "
+                    f"{'Contracts':>9} "
+                    f"{'Price':>10} "
+                    f"{'Value':>12} "
+                    f"{'Delta':>10} "
+                    f"{'Gamma':>10} "
+                    f"{'Theta':>10} "
+                    f"{'Vega':>10} "
+                    f"{'DTE':>8}"
+                )
+                self.logger.info(header)
+                self.logger.info("-" * 100)
+                
+                for symbol, trade_data in self.today_added_positions.items():
+                    contracts = trade_data.get('contracts', 0)
+                    price = trade_data.get('price', 0)
+                    value = trade_data.get('value', 0)
+                    
+                    option_data = trade_data.get('data', {})
+                    delta = 0
+                    gamma = 0
+                    theta = 0
+                    vega = 0
+                    dte = 0
+                    
+                    if hasattr(option_data, 'get'):
+                        # Dictionary-like access
+                        delta = option_data.get('Delta', 0)
+                        if 'Gamma' in option_data:
+                            gamma = option_data.get('Gamma', 0)
+                        if 'Theta' in option_data:
+                            theta = option_data.get('Theta', 0)
+                        if 'Vega' in option_data:
+                            vega = option_data.get('Vega', 0)
+                        if 'DaysToExpiry' in option_data:
+                            dte = option_data.get('DaysToExpiry', 0)
+                            
+                    elif hasattr(option_data, 'index'):
+                        # Pandas Series
+                        delta = option_data['Delta'] if 'Delta' in option_data.index else 0
+                        if 'Gamma' in option_data.index:
+                            gamma = option_data['Gamma'] if 'Gamma' in option_data.index else 0
+                        if 'Theta' in option_data.index:
+                            theta = option_data['Theta'] if 'Theta' in option_data.index else 0
+                        if 'Vega' in option_data.index:
+                            vega = option_data['Vega'] if 'Vega' in option_data.index else 0
+                        if 'DaysToExpiry' in option_data.index:
+                            dte = option_data['DaysToExpiry']
+                    else:
+                        # Handle case where option_data is a dictionary without 'get' method
+                        if isinstance(option_data, dict):
+                            delta = option_data.get('Delta', 0)
+                            gamma = option_data.get('Gamma', 0)
+                            theta = option_data.get('Theta', 0)
+                            vega = option_data.get('Vega', 0)
+                            if 'DaysToExpiry' in option_data:
+                                dte = option_data['DaysToExpiry']
+                            elif 'Expiration' in option_data:
+                                # Calculate days to expiry from expiration date
+                                expiry = option_data['Expiration']
+                                date = current_date
+                                dte = (expiry - date).days
+                    
+                    self.logger.info(f"{symbol:<16}{contracts:>10}${price:>8.2f}${value:>10.2f}{delta:>10.3f}{gamma:>10.6f}{theta:>9.2f}{vega:>9.2f}{dte:>8}")
+                
+                self.logger.info("-" * 100)
+            
+        else:
+            self.logger.info("No new trade signals generated")
+        
+        # Manage hedging separately after signals have been executed
+        if hasattr(self, 'hedging_manager') and self.hedging_manager and self.hedging_manager.enabled:
+            try:
+                # Log pre-hedge metrics
+                self.logger.info("--------------------------------------------------")
+                self.logger.info("4. Hedge Management:")
+                self.logger.info("--------------------------------------------------")
+                
+                # Execute hedging
+                self.hedging_manager.update_hedge(current_date, daily_data, self.portfolio)
+                
+            except Exception as e:
+                self.logger.error(f"Error in hedging: {e}")
+        
+        self.logger.info("--------------------------------------------------")
+        
     def _log_post_trade_summary(self, current_date: datetime) -> None:
         """
         Log post-trade portfolio summary after all trading activities.
@@ -752,117 +1137,199 @@ class TradingEngine:
         
         # Calculate daily return
         if hasattr(self.portfolio, 'daily_returns') and self.portfolio.daily_returns:
-            latest_return = self.portfolio.daily_returns[-1]
-            daily_pnl = latest_return.get('pnl', 0)
-            daily_return_pct = latest_return.get('return', 0)
-            self.logger.info(f"Daily P&L: ${daily_pnl:.0f} ({daily_return_pct:.2%})")
-            
-            # Log option and hedge PnL
-            option_pnl = latest_return.get('unrealized_pnl_change', 0)
-            hedge_pnl = latest_return.get('realized_pnl', 0)
-            self.logger.info(f"  Option PnL: ${option_pnl:.0f}")
-            self.logger.info(f"  Hedge PnL: ${hedge_pnl:.0f}")
+            # Find the most recent return entry
+            latest_return = None
+            for entry in reversed(self.portfolio.daily_returns):
+                if entry.get('date') and entry.get('date') <= current_date:
+                    latest_return = entry
+                    break
+                    
+            if latest_return:
+                daily_pnl = latest_return.get('pnl', 0)
+                daily_return_pct = latest_return.get('return', 0)
+                self.logger.info(f"Daily P&L: ${daily_pnl:,.2f} ({daily_return_pct:.2%})")
+                
+                # Log option and hedge PnL
+                option_pnl = latest_return.get('unrealized_pnl_change', 0)
+                hedge_pnl = latest_return.get('realized_pnl', 0)
+                self.logger.info(f"  Option PnL: ${option_pnl:,.2f}")
+                self.logger.info(f"  Hedge PnL: ${hedge_pnl:,.2f}")
         
         # Portfolio position info
         self.logger.info(f"Open Trades: {len(self.portfolio.positions)}")
         
-        # Calculate exposure
-        exposure_pct = portfolio_metrics['position_value'] / portfolio_metrics['portfolio_value'] if portfolio_metrics['portfolio_value'] > 0 else 0
+        # Calculate exposure using our enhanced method
+        exposure_pct = self.portfolio.get_total_position_exposure()
         self.logger.info(f"Total Position Exposure: {exposure_pct:.1%} of NLV")
-        self.logger.info(f"Net Liq: ${portfolio_metrics['portfolio_value']:.0f}")
-        self.logger.info(f"  Cash Balance: ${portfolio_metrics['cash_balance']:.0f}")
-        self.logger.info(f"  Total Liability: ${-portfolio_metrics['position_value']:.0f}")
+        
+        portfolio_value = portfolio_metrics['portfolio_value']
+        self.logger.info(f"Net Liq: ${portfolio_value:,.0f}")
+        self.logger.info(f"  Cash Balance: ${portfolio_metrics['cash_balance']:,.0f}")
+        
+        # Calculate liability using our enhanced method
+        total_liability = self.portfolio.get_total_liability()
+        self.logger.info(f"  Total Liability: ${total_liability:,.0f}")
         
         # Add hedge info if available
         if hasattr(self, 'hedging_manager') and self.hedging_manager:
             hedge_pnl = latest_return.get('realized_pnl', 0)
-            self.logger.info(f"  Self Hedge (Hedge PnL): ${hedge_pnl:.0f}")
+            self.logger.info(f"  Self Hedge (Hedge PnL): ${hedge_pnl:,.2f}")
         
         # Margin info
-        self.logger.info(f"Total Margin Requirement: ${portfolio_metrics['total_margin']:.0f}")
-        self.logger.info(f"Available Margin: ${portfolio_metrics['available_margin']:.0f}")
+        self.logger.info(f"Total Margin Requirement: ${portfolio_metrics['total_margin']:,.0f}")
+        self.logger.info(f"Available Margin: ${portfolio_metrics['available_margin']:,.0f}")
         self.logger.info(f"Margin-Based Leverage: {portfolio_metrics['current_leverage']:.2f}")
+        
+        # Add detailed margin section
+        self.logger.info("\nMargin Details:")
+        margin_type = "None"
+        if hasattr(self, 'margin_calculator'):
+            margin_type = self.margin_calculator.__class__.__name__
+        self.logger.info(f"  Margin Method: {margin_type}")
+        
+        # Add calculation details based on the margin type
+        if hasattr(self, 'margin_calculator'):
+            if isinstance(self.margin_calculator, OptionMarginCalculator):
+                self.logger.info("  Calculation: Option margin based on OCC rules")
+                self.logger.info(f"  OTM Margin Multiplier: {self.margin_calculator.otm_margin_multiplier:.2f}")
+            elif isinstance(self.margin_calculator, SPANMarginCalculator):
+                self.logger.info("  Calculation: SPAN risk-based margin")
+                self.logger.info(f"  Initial Margin: {self.margin_calculator.initial_margin_percentage:.1%} of notional")
+                self.logger.info(f"  Maintenance Margin: {self.margin_calculator.maintenance_margin_percentage:.1%} of notional")
+                self.logger.info(f"  Volatility Multiplier: {self.margin_calculator.volatility_multiplier:.2f}")
+                self.logger.info(f"  Hedge Credit Rate: {self.margin_calculator.hedge_credit_rate:.2f}")
+            else:
+                self.logger.info("  Calculation: Basic margin based on position value")
+                self.logger.info(f"  Max Leverage: {self.margin_calculator.max_leverage:.2f}")
         
         # Portfolio Greeks section
         self.logger.info("\nPortfolio Greek Risk:")
         
         # Option delta
-        self.logger.info(f"  Option Delta: {greeks['delta']:.3f} (${greeks['dollar_delta']:.2f})")
+        self.logger.info(f"  Option Delta: {greeks['delta']:.3f} (${greeks['dollar_delta']:,.2f})")
         
         # Hedge delta if available
         if hasattr(self, 'hedging_manager') and self.hedging_manager:
             hedge_delta = self.hedging_manager.current_hedge_delta if hasattr(self.hedging_manager, 'current_hedge_delta') else 0
             hedge_dollar_delta = self.hedging_manager.current_dollar_delta if hasattr(self.hedging_manager, 'current_dollar_delta') else 0
-            self.logger.info(f"  Hedge Delta: {hedge_delta:.3f} (${hedge_dollar_delta:.2f})")
+            self.logger.info(f"  Hedge Delta: {hedge_delta:.3f} (${hedge_dollar_delta:,.2f})")
             
             # Total delta (options + hedge)
             total_delta = greeks['delta'] + hedge_delta
             total_dollar_delta = greeks['dollar_delta'] + hedge_dollar_delta
-            self.logger.info(f"  Total Delta: {total_delta:.3f} (${total_dollar_delta:.2f})")
+            self.logger.info(f"  Total Delta: {total_delta:.3f} (${total_dollar_delta:,.2f})")
         
         # Other Greeks
-        self.logger.info(f"  Gamma: {greeks['gamma']:.6f} (${greeks['dollar_gamma']:.2f} per 1% move)")
-        self.logger.info(f"  Theta: ${greeks['dollar_theta']:.2f} per day")
-        self.logger.info(f"  Vega: ${greeks['dollar_vega']:.2f} per 1% IV")
+        self.logger.info(f"  Gamma: {greeks['gamma']:.6f} (${greeks['dollar_gamma']:,.2f} per 1% move)")
+        self.logger.info(f"  Theta: ${greeks['dollar_theta']:,.2f} per day")
+        self.logger.info(f"  Vega: ${greeks['dollar_vega']:,.2f} per 1% IV")
         
-        # Performance metrics if we have enough history
-        if hasattr(self.portfolio, 'daily_returns') and len(self.portfolio.daily_returns) >= 5:
-            perf = self.portfolio.get_performance_metrics()
-            self.logger.info("\nRolling Metrics:")
-            self.logger.info(f"  Sharpe: {perf['sharpe_ratio']:.2f}, Volatility: {perf['volatility']:.2%}")
-        
-        # Open trades table
+        # Open trades table with improved formatting
         self.logger.info("--------------------------------------------------")
         self.logger.info("\nOpen Trades Table:")
-        self.logger.info("-" * 120)
-        self.logger.info(f"{'Symbol':<20}{'Contracts':>10}{'Entry':>8}{'Current':>10}{'Value':>10}{'NLV%':>8}{'Underlying':>10}{'Delta':>10}{'DTE':>5}")
-        self.logger.info("-" * 120)
+        self.logger.info("-" * 140)
+        
+        # Modified header with better alignment
+        header = (
+            f"{'Symbol':<16} "
+            f"{'Contracts':>9} "
+            f"{'Entry':>8} "
+            f"{'Current':>8} "
+            f"{'Value':>9} "
+            f"{'NLV%':>6} "
+            f"{'Underlying':>10} "  
+            f"{'Delta':>8} "
+            f"{'Gamma':>9} "
+            f"{'Theta':>8} "
+            f"{'Vega':>8} "
+            f"{'Margin':>9} "
+            f"{'DTE':>5}"
+        )
+        self.logger.info(header)
+        self.logger.info("-" * 140)
         
         portfolio_value = portfolio_metrics['portfolio_value']
         for symbol, position in self.portfolio.positions.items():
             # Calculate position metrics
             is_option = isinstance(position, OptionPosition)
-            pos_value = position.current_price * position.contracts * (100 if is_option else 1)
+            
+            # Use entry price if current price is 0
+            price = position.current_price if position.current_price > 0 else position.avg_entry_price
+            pos_value = price * position.contracts * (100 if is_option else 1)
             pos_pct = pos_value / portfolio_value if portfolio_value > 0 else 0
             
-            # Format the position info line
-            self.logger.info(f"{symbol:<20}{position.contracts:>10d}${position.avg_entry_price:>6.2f}${position.current_price:>8.2f}${pos_value:>9.0f}{pos_pct:>7.1%}${position.underlying_price:>8.2f}{position.current_delta:>10.3f}{position.days_to_expiry if hasattr(position, 'days_to_expiry') else 0:>5d}")
+            # Get margin if available
+            margin = position.get_margin_requirement() if hasattr(position, 'get_margin_requirement') else 0
+            
+            # Format the position info line (with better spacing)
+            position_line = (
+                f"{symbol:<16} "
+                f"{position.contracts:>9d} "
+                f"${position.avg_entry_price:>6.2f} "
+                f"${price:>6.2f} "
+                f"${pos_value:>7,.0f} "
+                f"{pos_pct:>5.1%} "
+                f"${position.underlying_price:>8.2f} "
+                f"{position.current_delta:>8.3f} "
+                f"{position.current_gamma:>8.6f} "
+                f"${position.current_theta:>6.2f} "
+                f"${position.current_vega:>6.2f} "
+                f"${margin:>7,.0f} "
+                f"{position.days_to_expiry if hasattr(position, 'days_to_expiry') else 0:>5d}"
+            )
+            self.logger.info(position_line)
         
-        # Print table footer
-        self.logger.info("-" * 120)
-        self.logger.info(f"TOTAL{' ':>30}${self.portfolio.position_value:>9.0f}{exposure_pct:>7.1%}")
-        self.logger.info("-" * 120)
+        # Print table footer with total position value
+        self.logger.info("-" * 140)
+        
+        # Calculate total position value using our enhanced method
+        total_exposure = self.portfolio.get_total_position_exposure() * portfolio_value
+        total_margin = self.portfolio.get_margin_requirement() if hasattr(self.portfolio, 'get_margin_requirement') else 0
+        
+        # Format the total line with better spacing
+        total_line = (
+            f"{'TOTAL':<16} "
+            f"{'':<9} "
+            f"{'':<8} "
+            f"{'':<8} "
+            f"${total_exposure:>7,.0f} "
+            f"{exposure_pct:>5.1%} "
+            f"{'':<10} "
+            f"{'':<8} "
+            f"{'':<9} "
+            f"{'':<8} "
+            f"{'':<8} "
+            f"${total_margin:>7,.0f} "
+            f"{'':<5}"
+        )
+        self.logger.info(total_line)
+        self.logger.info("-" * 140)
+        
+        # Rolling metrics output
+        if hasattr(self.portfolio, 'get_rolling_metrics'):
+            rolling_metrics = self.portfolio.get_rolling_metrics()
+            if rolling_metrics:
+                self.logger.info("\nRolling Metrics:")
+                self.logger.info(f"  Expanding Window (all obs, min 5 required): Sharpe: {rolling_metrics.get('expanding_sharpe', 0):.2f}, Volatility: {rolling_metrics.get('expanding_volatility', 0):.2%}")
+                self.logger.info(f"  Short Window (21 days, rolling): Sharpe: {rolling_metrics.get('short_sharpe', 0):.2f}, Volatility: {rolling_metrics.get('short_volatility', 0):.2%}")
+                self.logger.info(f"  Medium Window (63 days, rolling): Sharpe: {rolling_metrics.get('medium_sharpe', 0):.2f}, Volatility: {rolling_metrics.get('medium_volatility', 0):.2%}")
+                self.logger.info(f"  Long Window (252 days, rolling): Sharpe: {rolling_metrics.get('long_sharpe', 0):.2f}, Volatility: {rolling_metrics.get('long_volatility', 0):.2%}")
+        
         self.logger.info("==================================================")
+        
+        # Add the generation of the post-trade verification file
+        if hasattr(self, 'reporting_system') and self.reporting_system:
+            try:
+                post_trade_file = self.reporting_system.generate_business_logic_verification_file(
+                    self.portfolio, current_date, pre_trade=False)
+                self.logger.debug(f"Post-trade verification file generated: {post_trade_file}")
+            except Exception as e:
+                self.logger.error(f"Error generating post-trade verification file: {e}")
+                self.logger.debug(traceback.format_exc())
         
         # Log completion of day processing
         self.logger.info(f"[TradeManager] Completed processing for {current_date.strftime('%Y-%m-%d')}")
     
-    def _process_trading_day(self, current_date: datetime) -> None:
-        """
-        Process a single trading day in the backtest.
-        
-        Args:
-            current_date: Current trading date
-        """
-        self.logger.info(f"[TradeManager] Processing day: {current_date.strftime('%Y-%m-%d')}")
-        
-        # Get data for the current day
-        daily_data = self.data[self.data['DataDate'] == current_date]
-        
-        if len(daily_data) == 0:
-            self.logger.warning(f"No data available for {current_date.strftime('%Y-%m-%d')}")
-            return
-            
-        # Phase 1: PRE-TRADE - Update positions with market data and log pre-trade summary
-        self._update_positions(current_date, daily_data)
-        self._log_pre_trade_summary(current_date, daily_data)
-        
-        # Phase 2: TRADING ACTIVITIES - Manage positions, execute signals, calculate metrics
-        self._execute_trading_activities(current_date, daily_data)
-        
-        # Phase 3: POST-TRADE - Log post-trade summary
-        self._log_post_trade_summary(current_date)
-            
     def _update_positions(self, current_date: datetime, daily_data: pd.DataFrame) -> None:
         """
         Update all positions with latest market data.
@@ -885,22 +1352,14 @@ class TradingEngine:
                 symbol = row['OptionSymbol']
                 market_data_by_symbol[symbol] = row.to_dict()
         
-        # Store pre-update position values for logging
-        pre_update_values = {}
+        # Store pre-update position values for logging (will be used later in _log_pre_trade_summary)
+        self.pre_update_values = {}
         for symbol, position in self.portfolio.positions.items():
-            pre_update_values[symbol] = position.current_price * position.contracts * 100 if isinstance(position, OptionPosition) else position.current_price * position.contracts
+            self.pre_update_values[symbol] = position.current_price * position.contracts * 100 if isinstance(position, OptionPosition) else position.current_price * position.contracts
         
-        # Update portfolio positions
-        self.portfolio.update_market_data(market_data_by_symbol, current_date)
-            
-        # Log position updates
-        for symbol, position in self.portfolio.positions.items():
-            if symbol in market_data_by_symbol:
-                new_value = position.current_price * position.contracts * 100 if isinstance(position, OptionPosition) else position.current_price * position.contracts
-                change = new_value - pre_update_values.get(symbol, 0)
-                
-                self.logger.info(f"[Position Update] {symbol}: ${new_value:.2f} (change: ${change:.2f})")
-            
+        # Update portfolio positions (passing silent=True to prevent logging POST-TRADE summary)
+        self.portfolio.update_market_data(market_data_by_symbol, None)  # Don't pass current_date to avoid POST-TRADE summary
+
     def _manage_positions(self, current_date: datetime, daily_data: pd.DataFrame) -> None:
         """
         Manage existing positions, checking exit conditions.
@@ -958,7 +1417,7 @@ class TradingEngine:
                 # Log detailed info about the closed position
                 self.logger.info(f"[TradeManager] Closed position {symbol}: {reason}")
                 self.logger.info(f"  Contracts: {quantity}")
-                self.logger.info(f"  P&L: ${pnl:.2f}")
+                self.logger.info(f"  P&L: ${pnl:,.2f}")
                 
     def _execute_signals(self, signals: List[Dict[str, Any]], daily_data: pd.DataFrame, current_date: datetime) -> None:
         """
@@ -972,10 +1431,25 @@ class TradingEngine:
         # Log that we're executing signals
         self.logger.info("[TradeManager] Executing trading signals")
         
+        # Initialize today's added positions dictionary
+        self.today_added_positions = {}
+        
         # Process each signal
         for signal in signals:
             action = signal.get('action')
             symbol = signal.get('symbol')
+            
+            # Map buy/sell actions to open with appropriate is_short flag
+            if action == 'buy':
+                # Convert 'buy' to 'open' with is_short=False
+                action = 'open'
+                signal['is_short'] = False
+                self.logger.debug(f"Mapped 'buy' action to 'open' with is_short=False")
+            elif action == 'sell':
+                # Convert 'sell' to 'open' with is_short=True
+                action = 'open'
+                signal['is_short'] = True
+                self.logger.debug(f"Mapped 'sell' action to 'open' with is_short=True")
             
             # For open positions
             if action == 'open':
@@ -1021,7 +1495,15 @@ class TradingEngine:
                     if position:
                         position_value = price * quantity * 100 if position_type == 'option' else price * quantity
                         self.logger.info(f"[TradeManager] Added {quantity} contracts of {symbol}")
-                        self.logger.info(f"  Position value: ${position_value:.2f}")
+                        self.logger.info(f"  Position value: ${position_value:,.2f}")
+                        
+                        # Store in today's added positions
+                        self.today_added_positions[symbol] = {
+                            'contracts': quantity,
+                            'price': price,
+                            'value': position_value,
+                            'data': instrument_data
+                        }
                 else:
                     self.logger.warning(f"Cannot open position {symbol}: No instrument data available")
             
@@ -1052,7 +1534,7 @@ class TradingEngine:
                     )
                     
                     # Enhanced logging for PnL
-                    self.logger.info(f"[TradeManager] Closed position - P&L: ${pnl:.2f}")
+                    self.logger.info(f"[TradeManager] Closed position - P&L: ${pnl:,.2f}")
                 else:
                     self.logger.warning(f"Cannot close position {symbol} - not found in portfolio")
                     

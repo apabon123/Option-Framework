@@ -1,0 +1,29 @@
+---
+description: 
+globs: 
+alwaysApply: false
+---
+# Coding Workflow Preferences for Cursor
+
+## Focus on Task-Relevant Code
+- **Concentrate on Relevant Areas:**  
+  Modify only the sections of the code that are directly related to the task at hand. Avoid touching parts of the codebase that are unrelated to prevent unintended side effects.
+
+## Comprehensive Testing
+- **Write Thorough Tests:**  
+  Ensure that every major functionality is covered by tests. Integrate test writing as part of the workflow to avoid overlooking critical functionality.
+
+## Stability in Implementation
+- **Preserve Existing Patterns:**  
+  Avoid making major changes to established patterns and architecture unless explicitly requested. Stick to proven methods to maintain stability.
+
+- **Modify Instead of Rewriting:**  
+  When addressing an issue, adjust the existing code rather than rewriting it from scratch with new patterns. This minimizes disruption and preserves code consistency.
+
+## Impact Awareness
+- **Evaluate Dependency Effects:**  
+  Always consider how changes might affect other parts of the code. Assess dependencies and potential impacts to ensure that modifications don’t break related functionality.
+
+## Clear and Focused Changes
+- **Follow Specific Instructions:**  
+  Implement changes only as specified in the request. Provide detailed instructions when necessary to ensure that only the intended parts of the code are modified.

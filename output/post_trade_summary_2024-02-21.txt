@@ -1,0 +1,44 @@
+============================================================
+POST-TRADE Summary [2024-02-21]:
+Daily P&L: $16.00 (0.02%)
+  Option PnL: $0.00
+  Hedge PnL: $0.00
+Open Trades: 3
+Total Position Exposure: 0.1% of NLV
+Net Liq: $99817.50
+  Cash Balance: $99930.00
+  Total Liability: $112.50
+  Self Hedge (Hedge PnL): $0.00
+Total Margin Requirement: $112.50
+Available Margin: $99705.00
+Margin-Based Leverage: 0.00
+
+Portfolio Greek Risk:
+  Option Delta: -0.116 ($-1156.00)
+  Hedge Delta: 0.000 ($0.00)
+  Total Delta: -0.116 ($-1156.00)
+  Gamma: -0.010200 ($-102.00 per 1% move)
+  Theta: $17.75 per day
+  Vega: $-54.55 per 1% IV
+
+Rolling Metrics:
+  Expanding Window (all obs, min 5 required): Sharpe: -2.85, Volatility: 0.50%
+  Short Window (21 days, rolling): Sharpe: -2.69, Volatility: 0.42%
+  Medium Window (63 days, rolling): Sharpe: -2.85, Volatility: 0.50%
+  Long Window (252 days, rolling): Sharpe: -2.85, Volatility: 0.50%
+--------------------------------------------------
+
+Open Trades Table:
+------------------------------------------------------------------------------------------------------------------------
+Symbol           Contracts   Entry  Current      Value  NLV% Underlying      Delta      Gamma      Theta       Vega     Margin   DTE
+------------------------------------------------------------------------------------------------------------------------
+SPY240419C00540000          1 $ 0.47 $  0.35 $   35.50  0.0% $  497.21     0.041  0.004000 $   -6.77 $   17.36 $       0    58
+SPY240430C00550000          1 $ 0.47 $  0.23 $   23.50  0.0% $  497.21     0.026  0.002500 $   -4.30 $   13.05 $       0    69
+SPY240517C00550000          1 $ 0.56 $  0.54 $   53.50  0.1% $  497.21     0.048  0.003700 $   -6.69 $   24.15 $       0    86
+------------------------------------------------------------------------------------------------------------------------
+TOTAL                                       $  112.50  0.1%                               $       0
+------------------------------------------------------------------------------------------------------------------------
+============================================================
+
+[TradeManager] Logs:
+[TradeManager] Completed processing for 2024-02-21

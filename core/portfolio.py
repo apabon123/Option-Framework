@@ -63,10 +63,370 @@ class Portfolio:
         # Track realized PnL for the current day
         self.today_realized_pnl = 0
         
+        # Add daily metrics dictionary for tracking
+        self.daily_metrics = {}
+        
         # Log initialization
         self.logger.info(f"Portfolio initialized with ${initial_capital:,.2f} capital")
         self.logger.info(f"  Max position size: {max_position_size_pct:.1%} of portfolio")
         self.logger.info(f"  Max portfolio delta: {max_portfolio_delta:.1%} of portfolio value")
+    
+    # Add dictionary-like access methods for easier reporting
+    def keys(self):
+        """
+        Return the portfolio attribute keys for dictionary-like access.
+        Used by reporting system to access portfolio data.
+        """
+        # Return the main attributes that should be accessible 
+        return [
+            'initial_capital', 'cash_balance', 'positions', 'transactions',
+            'daily_returns', 'equity_history', 'position_value', 'total_value',
+            'daily_metrics'
+        ]
+    
+    def items(self):
+        """
+        Return portfolio attributes as (key, value) pairs for dictionary-like access.
+        Used by reporting system for iteration.
+        """
+        return [(key, getattr(self, key)) for key in self.keys()]
+    
+    def __getitem__(self, key):
+        """
+        Make the Portfolio object subscriptable (e.g., portfolio['cash_balance']).
+        
+        Args:
+            key: The attribute name to access
+            
+        Returns:
+            The attribute value
+            
+        Raises:
+            KeyError: If the attribute doesn't exist
+        """
+        if hasattr(self, key):
+            return getattr(self, key)
+        raise KeyError(f"Portfolio has no attribute '{key}'")
+    
+    def get(self, key, default=None):
+        """
+        Get a portfolio attribute with a default value if not found.
+        Used by reporting system for safe access to attributes.
+        
+        Args:
+            key: Attribute name
+            default: Default value if attribute doesn't exist
+            
+        Returns:
+            The attribute value or default
+        """
+        return getattr(self, key, default)
+        
+    def get_daily_return(self, date=None):
+        """
+        Get the daily return for a specific date or the latest daily return if no date provided.
+        Used by performance reporting functions.
+        
+        Args:
+            date: The date to get the return for (optional, defaults to latest date)
+            
+        Returns:
+            float: Daily return as a decimal (0.01 = 1%)
+        """
+        # If no date provided, use the latest date in equity history
+        if date is None:
+            if hasattr(self, 'daily_returns') and self.daily_returns:
+                # Return the most recent daily return
+                return self.daily_returns[-1].get('return', 0.0)
+            elif self.equity_history:
+                # Calculate from equity history
+                dates = sorted(self.equity_history.keys())
+                if len(dates) > 1:
+                    prev_value = self.equity_history[dates[-2]]
+                    current_value = self.equity_history[dates[-1]]
+                    if prev_value > 0:
+                        return (current_value - prev_value) / prev_value
+            return 0.0
+            
+        # Check if we have daily metrics for this date
+        if hasattr(self, 'daily_metrics') and date in self.daily_metrics:
+            # If we have a previous date's value, calculate return
+            prev_dates = [d for d in self.daily_metrics.keys() if d < date]
+            if prev_dates:
+                prev_date = max(prev_dates)
+                prev_value = self.daily_metrics[prev_date].get('portfolio_value', self.initial_capital)
+                current_value = self.daily_metrics[date].get('portfolio_value', self.initial_capital)
+                
+                if prev_value > 0:
+                    return (current_value - prev_value) / prev_value
+                    
+        # Check equity history
+        if date in self.equity_history:
+            dates = sorted(self.equity_history.keys())
+            date_idx = dates.index(date)
+            if date_idx > 0:
+                prev_value = self.equity_history[dates[date_idx - 1]]
+                current_value = self.equity_history[date]
+                
+                if prev_value > 0:
+                    return (current_value - prev_value) / prev_value
+        
+        # Default to no return
+        return 0.0
+    
+    def get_daily_return_percent(self, date=None):
+        """
+        Get the daily return for a specific date as a percentage.
+        
+        Args:
+            date: The date to get the return for (optional, defaults to latest date)
+            
+        Returns:
+            float: Daily return as a percentage (1.0 = 1%)
+        """
+        # Get the return as a decimal and convert to percentage
+        return self.get_daily_return(date) * 100.0
+    
+    def get_returns_series(self):
+        """
+        Get a series of all daily returns for reporting purposes.
+        
+        Returns:
+            dict: Dictionary with dates as keys and return values (as decimals) as values
+        """
+        returns_dict = {}
+        
+        # First try to use daily_returns if available
+        if hasattr(self, 'daily_returns') and self.daily_returns:
+            for return_entry in self.daily_returns:
+                # Ensure dates are converted to strings for consistent handling
+                date_key = return_entry['date']
+                if not isinstance(date_key, str):
+                    date_key = date_key.strftime('%Y-%m-%d')
+                returns_dict[date_key] = float(return_entry.get('return', 0.0))
+        
+        # If no daily returns, calculate from equity history
+        elif self.equity_history:
+            dates = sorted(self.equity_history.keys())
+            for i in range(1, len(dates)):
+                prev_value = float(self.equity_history[dates[i-1]])
+                current_value = float(self.equity_history[dates[i]])
+                
+                # Ensure dates are converted to strings for consistent handling
+                date_key = dates[i]
+                if not isinstance(date_key, str):
+                    date_key = date_key.strftime('%Y-%m-%d')
+                    
+                if prev_value > 0:
+                    returns_dict[date_key] = float((current_value - prev_value) / prev_value)
+                else:
+                    returns_dict[date_key] = 0.0
+                    
+        # If no equity history either, check daily metrics
+        elif hasattr(self, 'daily_metrics') and self.daily_metrics:
+            dates = sorted(self.daily_metrics.keys())
+            for i in range(1, len(dates)):
+                prev_value = float(self.daily_metrics[dates[i-1]].get('portfolio_value', self.initial_capital))
+                current_value = float(self.daily_metrics[dates[i]].get('portfolio_value', self.initial_capital))
+                
+                # Ensure dates are converted to strings for consistent handling
+                date_key = dates[i]
+                if not isinstance(date_key, str):
+                    date_key = date_key.strftime('%Y-%m-%d')
+                
+                if prev_value > 0:
+                    returns_dict[date_key] = float((current_value - prev_value) / prev_value)
+                else:
+                    returns_dict[date_key] = 0.0
+        
+        return returns_dict
+    
+    def get_option_pnl(self):
+        """
+        Get option P&L data for reporting purposes.
+        
+        Returns:
+            dict: Dictionary with total option P&L and by position
+        """
+        pnl_data = {
+            'total': 0.0,
+            'by_position': {}
+        }
+        
+        # Calculate total realized PnL from option positions
+        for symbol, position in self.positions.items():
+            if hasattr(position, 'realized_pnl'):
+                position_pnl = float(position.realized_pnl)
+                pnl_data['total'] += position_pnl
+                pnl_data['by_position'][symbol] = position_pnl
+            
+        # Also include historical positions that were closed
+        for transaction in self.transactions:
+            if 'symbol' in transaction and 'pnl' in transaction:
+                symbol = transaction['symbol']
+                if symbol not in pnl_data['by_position']:
+                    pnl_data['by_position'][symbol] = 0.0
+                pnl_data['by_position'][symbol] += float(transaction.get('pnl', 0.0))
+        
+        return pnl_data
+    
+    def get_hedge_pnl(self):
+        """
+        Get hedge P&L data for reporting purposes.
+        
+        Returns:
+            dict: Dictionary with total hedge P&L and by position
+        """
+        hedge_pnl_data = {
+            'total': 0.0,
+            'by_position': {}
+        }
+        
+        # Filter transactions for hedge positions
+        for transaction in self.transactions:
+            if 'symbol' in transaction and 'pnl' in transaction and transaction.get('is_hedge', False):
+                symbol = transaction['symbol']
+                if symbol not in hedge_pnl_data['by_position']:
+                    hedge_pnl_data['by_position'][symbol] = 0.0
+                    
+                pnl = float(transaction.get('pnl', 0.0))
+                hedge_pnl_data['by_position'][symbol] += pnl
+                hedge_pnl_data['total'] += pnl
+        
+        return hedge_pnl_data
+    
+    def get_trade_history(self):
+        """
+        Get the trade history in a format suitable for reporting.
+        
+        Returns:
+            list: List of trade dictionaries with standardized fields
+        """
+        trade_history = []
+        
+        for transaction in self.transactions:
+            # Convert all numeric values to simple floats
+            trade = {}
+            for key, value in transaction.items():
+                if isinstance(value, (int, float)):
+                    trade[key] = float(value)
+                elif key == 'date' and not isinstance(value, str):
+                    # Convert date to string format
+                    trade[key] = value.strftime('%Y-%m-%d')
+                else:
+                    trade[key] = value
+            
+            trade_history.append(trade)
+        
+        return trade_history
+    
+    def get_equity_history_as_list(self):
+        """
+        Get a standardized equity history in a list format for reporting.
+        This avoids issues with inconsistent data structures in reporting.
+        
+        Returns:
+            List of tuples: [(date_str, equity_value), ...]
+        """
+        # Convert equity history to a list of (date, value) tuples
+        # Use string dates for consistent handling in reports
+        equity_list = []
+        
+        # Start with initial value
+        equity_list.append(('initial', float(self.initial_capital)))
+        
+        # Sort dates to ensure chronological order
+        for date in sorted(self.equity_history.keys()):
+            # Convert date to string for consistent handling
+            date_str = date
+            if not isinstance(date, str):
+                date_str = date.strftime('%Y-%m-%d')
+                
+            # Ensure value is a simple float, not numpy or other array-like type
+            value = float(self.equity_history[date])
+            
+            # Add to list
+            equity_list.append((date_str, value))
+        
+        return equity_list
+    
+    def record_daily_metrics(self, date):
+        """
+        Record daily portfolio metrics for the given date.
+        This method is called by the trading engine to track portfolio performance.
+        
+        Args:
+            date: The date to record metrics for
+        """
+        portfolio_value = self.get_portfolio_value()
+        cash = getattr(self, 'cash_balance', self.initial_capital)
+        
+        # Initialize daily metrics dictionary if it doesn't exist
+        if not hasattr(self, 'daily_metrics'):
+            self.daily_metrics = {}
+            
+        # Initialize daily_returns if it doesn't exist
+        if not hasattr(self, 'daily_returns'):
+            self.daily_returns = []
+            
+        # Ensure all values are simple types (not numpy arrays or other objects)
+        # This prevents issues when saving metrics to reports
+        position_value = float(self.position_value) if hasattr(self, 'position_value') else 0.0
+        
+        # Record metrics
+        self.daily_metrics[date] = {
+            'date': date,
+            'portfolio_value': float(portfolio_value),  # Convert to simple float
+            'cash': float(cash),  # Convert to simple float
+            'position_value': position_value  # Use the converted value
+        }
+        
+        # Also update equity history
+        if not hasattr(self, 'equity_history'):
+            self.equity_history = {}
+            
+        self.equity_history[date] = float(portfolio_value)  # Convert to simple float
+        
+        # Filter equity history to only include backtest dates (not current time)
+        # This ensures we're only using dates from the backtest for calculations
+        backtest_dates = [d for d in self.equity_history.keys() if isinstance(d, (datetime, pd.Timestamp)) and d.year < 2025]
+        backtest_dates.sort()
+        
+        if len(backtest_dates) > 1:
+            # Find the previous date in the backtest
+            current_index = backtest_dates.index(date) if date in backtest_dates else -1
+            
+            if current_index > 0:  # We have a previous date
+                prev_date = backtest_dates[current_index - 1]
+                prev_value = self.equity_history[prev_date]
+                prev_position_value = self.daily_metrics.get(prev_date, {}).get('position_value', 0)
+                
+                if prev_value > 0:
+                    daily_return = (portfolio_value - prev_value) / prev_value
+                    daily_pnl = portfolio_value - prev_value
+                    
+                    # Calculate unrealized PnL change more accurately
+                    unrealized_pnl_change = position_value - prev_position_value
+                    realized_pnl = daily_pnl - unrealized_pnl_change
+                    
+                    # Add to daily returns list
+                    return_entry = {
+                        'date': date,
+                        'return': float(daily_return),  # Convert to simple float
+                        'portfolio_value': float(portfolio_value),  # Convert to simple float
+                        'pnl': float(daily_pnl),  # Add the actual PnL value
+                        'unrealized_pnl_change': float(unrealized_pnl_change),  # More accurate change
+                        'realized_pnl': float(realized_pnl)  # Corrected realized PnL
+                    }
+                    
+                    # Log the components for debugging
+                    self.logger.debug(f"Daily PnL components: Total=${daily_pnl:.2f}, Unrealized=${unrealized_pnl_change:.2f}, Realized=${realized_pnl:.2f}")
+                    
+                    self.daily_returns.append(return_entry)
+                    
+                    # Reset today's realized PnL for the next day
+                    if hasattr(self, 'today_realized_pnl'):
+                        self.today_realized_pnl = 0
     
     def get_portfolio_value(self) -> float:
         """
@@ -235,6 +595,9 @@ class Portfolio:
         self.logger.info(f"  Position value: ${position_value:,.2f}")
         self.logger.info(f"  New cash balance: ${self.cash_balance:,.2f}")
         
+        # Update portfolio value immediately after adding the position
+        self._update_portfolio_value()
+        
         # Check if new portfolio delta exceeds limits
         self._check_portfolio_delta_constraint()
         
@@ -289,10 +652,11 @@ class Portfolio:
             position_value *= 100  # Option contracts are x100
             
         # Update realized PnL
-        pnl = position.remove_contracts(quantity, price, execution_data)
+        pnl = position.remove_contracts(quantity, price, execution_data, reason)
         
         # Track today's realized PnL
-        self.today_realized_pnl += pnl
+        if hasattr(self, 'today_realized_pnl'):
+            self.today_realized_pnl += pnl
         
         # Update cash balance - inverse of add position
         if position.is_short:
@@ -328,6 +692,9 @@ class Portfolio:
             self.logger.info(f"Position {symbol} closed entirely")
             del self.positions[symbol]
             
+        # Update portfolio value immediately after removing the position
+        self._update_portfolio_value()
+            
         return pnl
     
     def update_market_data(self, market_data_by_symbol: Dict[str, Any], current_date: Optional[datetime] = None) -> None:
@@ -336,7 +703,7 @@ class Portfolio:
         
         Args:
             market_data_by_symbol: Dictionary of market data by symbol
-            current_date: Current date for this update (optional)
+            current_date: Current date for this update (optional). If None, no POST-TRADE summary will be logged.
         """
         # Skip if there are no positions
         if not self.positions:
@@ -350,7 +717,16 @@ class Portfolio:
         
         # Keep track of positions updated
         updated_positions = []
-        positions_to_remove = []  # For expired options
+        positions_to_remove = []
+        
+        # Extract underlying prices for consistency
+        underlying_prices = {}
+        for symbol, market_data in market_data_by_symbol.items():
+            if hasattr(market_data, 'get'):
+                underlying_symbol = market_data.get('UnderlyingSymbol', 'SPY')
+                underlying_price = market_data.get('UnderlyingPrice')
+                if underlying_price and underlying_symbol not in underlying_prices:
+                    underlying_prices[underlying_symbol] = underlying_price
         
         # Update each position with latest market data
         for symbol, position in list(self.positions.items()):
@@ -364,22 +740,56 @@ class Portfolio:
                 # Extract market data
                 if hasattr(market_data, 'get'):
                     # Dict-like object
-                    price = market_data.get('MidPrice', position.current_price)
+                    # First check for MidPrice, then try to calculate from Bid/Ask
+                    price = market_data.get('MidPrice')
+                    if price is None or price == 0:
+                        bid = market_data.get('Bid', 0)
+                        ask = market_data.get('Ask', 0)
+                        if bid > 0 and ask > 0:
+                            price = (bid + ask) / 2
+                        elif bid > 0:
+                            price = bid
+                        elif ask > 0:
+                            price = ask
+                        else:
+                            # If still no price, use entry price as last resort
+                            price = position.avg_entry_price
+                    
                     delta = market_data.get('Delta', position.current_delta)
                     gamma = market_data.get('Gamma', position.current_gamma)
                     theta = market_data.get('Theta', position.current_theta)
                     vega = market_data.get('Vega', position.current_vega)
                     days_to_expiry = market_data.get('DaysToExpiry', position.days_to_expiry if hasattr(position, 'days_to_expiry') else None)
-                    underlying_price = market_data.get('UnderlyingPrice')
+                    
+                    # Get underlying symbol and use consistent price
+                    underlying_symbol = market_data.get('UnderlyingSymbol', 'SPY')
+                    underlying_price = underlying_prices.get(underlying_symbol, market_data.get('UnderlyingPrice'))
                 else:
                     # Pandas Series or DataFrame row
-                    price = market_data['MidPrice'] if 'MidPrice' in market_data else position.current_price
+                    # First check for MidPrice, then try to calculate from Bid/Ask
+                    if 'MidPrice' in market_data and market_data['MidPrice'] > 0:
+                        price = market_data['MidPrice']
+                    elif 'Bid' in market_data and 'Ask' in market_data and market_data['Bid'] > 0 and market_data['Ask'] > 0:
+                        price = (market_data['Bid'] + market_data['Ask']) / 2
+                    elif 'Bid' in market_data and market_data['Bid'] > 0:
+                        price = market_data['Bid']
+                    elif 'Ask' in market_data and market_data['Ask'] > 0:
+                        price = market_data['Ask']
+                    elif 'Last' in market_data and market_data['Last'] > 0:
+                        price = market_data['Last']
+                    else:
+                        # If still no price, use entry price as last resort
+                        price = position.avg_entry_price
+                    
                     delta = market_data['Delta'] if 'Delta' in market_data else position.current_delta
                     gamma = market_data['Gamma'] if 'Gamma' in market_data else position.current_gamma
                     theta = market_data['Theta'] if 'Theta' in market_data else position.current_theta
                     vega = market_data['Vega'] if 'Vega' in market_data else position.current_vega
                     days_to_expiry = market_data['DaysToExpiry'] if 'DaysToExpiry' in market_data else (position.days_to_expiry if hasattr(position, 'days_to_expiry') else None)
-                    underlying_price = market_data['UnderlyingPrice'] if 'UnderlyingPrice' in market_data else None
+                    
+                    # Get underlying symbol and use consistent price
+                    underlying_symbol = market_data['UnderlyingSymbol'] if 'UnderlyingSymbol' in market_data else 'SPY'
+                    underlying_price = underlying_prices.get(underlying_symbol, market_data['UnderlyingPrice'] if 'UnderlyingPrice' in market_data else None)
                 
                 # Update position with new market data
                 position.current_price = price
@@ -408,8 +818,8 @@ class Portfolio:
             else:
                 self.logger.debug(f"No market data available for {symbol}")
                 
-        # Log update summary
-        if updated_positions:
+        # Log update summary only if current_date is provided
+        if updated_positions and current_date is not None:
             self.logger.debug(f"Updated market data for {len(updated_positions)} positions")
             
             # Calculate new portfolio value
@@ -417,80 +827,89 @@ class Portfolio:
             daily_return = (current_value - prev_value) / prev_value if prev_value > 0 else 0
             
             # Log daily return if date is provided
-            if current_date:
-                self.logger.info("===========================================")
-                self.logger.info(f"POST-TRADE Summary [{current_date.strftime('%Y-%m-%d')}]:")
-                self.logger.info(f"Daily P&L: ${current_value - prev_value:.0f} ({daily_return:.2%})")
-                self.logger.info(f"  Option PnL: ${current_value - prev_value - self.today_realized_pnl:.0f}")
-                self.logger.info(f"  Realized PnL: ${self.today_realized_pnl:.0f}")
-                self.logger.info(f"Open Trades: {len(self.positions)}")
+            self.logger.info("===========================================")
+            self.logger.info(f"POST-TRADE Summary [{current_date.strftime('%Y-%m-%d')}]:")
+            self.logger.info(f"Daily P&L: ${current_value - prev_value:.0f} ({daily_return:.2%})")
+            self.logger.info(f"  Option PnL: ${current_value - prev_value - self.today_realized_pnl:.0f}")
+            self.logger.info(f"  Realized PnL: ${self.today_realized_pnl:.0f}")
+            self.logger.info(f"Open Trades: {len(self.positions)}")
+            
+            # Calculate total exposure as percentage of NLV
+            total_exposure = 0
+            for pos in self.positions.values():
+                if isinstance(pos, OptionPosition):
+                    pos_value = abs(pos.current_price * pos.contracts * 100)
+                else:
+                    pos_value = abs(pos.current_price * pos.contracts)
+                total_exposure += pos_value
+            
+            exposure_pct = total_exposure / current_value if current_value > 0 else 0
+            self.logger.info(f"Total Position Exposure: {exposure_pct:.1%} of NLV")
+            self.logger.info(f"Net Liq: ${current_value:.0f}")
+            
+            # Get portfolio metrics for additional information
+            metrics = self.get_portfolio_metrics()
+            self.logger.info(f"  Cash Balance: ${metrics['cash_balance']:.0f}")
+            self.logger.info(f"  Total Liability: ${metrics['position_value']:.0f}")
+            self.logger.info(f"Total Margin Requirement: ${metrics['total_margin']:.0f}")
+            self.logger.info(f"Available Margin: ${metrics['available_margin']:.0f}")
+            self.logger.info(f"Margin-Based Leverage: {metrics['current_leverage']:.2f}")
+            
+            # Portfolio Greeks section
+            self.logger.info("\nPortfolio Greek Risk:")
+            self.logger.info(f"  Option Delta: {metrics['delta']:.3f} (${metrics['dollar_delta']:.2f})")
+            self.logger.info(f"  Gamma: {metrics['gamma']:.6f} (${metrics['dollar_gamma']:.2f} per 1% move)")
+            self.logger.info(f"  Theta: ${metrics['dollar_theta']:.2f} per day")
+            self.logger.info(f"  Vega: ${metrics['dollar_vega']:.2f} per 1% IV")
+            
+            # Performance metrics if we have enough data
+            if len(self.daily_returns) >= 5:
+                perf_metrics = self.get_performance_metrics()
+                self.logger.info("\nRolling Metrics:")
+                self.logger.info(f"  Sharpe: {perf_metrics.get('sharpe_ratio', 0):.2f}, Volatility: {perf_metrics.get('volatility', 0):.2%}")
+            
+            # Open positions table
+            self.logger.info("\nOpen Trades Table:")
+            self.logger.info("-" * 120)
+            self.logger.info(f"{'Symbol':<20}{'Contracts':>10}{'Entry':>8}{'Current':>10}{'Value':>10}{'NLV%':>8}{'Underlying':>10}{'Delta':>10}{'Gamma':>10}{'Theta':>10}{'Vega':>10}{'Margin':>10}{'DTE':>5}")
+            self.logger.info("-" * 120)
+            
+            for symbol, pos in self.positions.items():
+                if isinstance(pos, OptionPosition):
+                    pos_value = pos.current_price * pos.contracts * 100
+                else:
+                    pos_value = pos.current_price * pos.contracts
                 
-                # Calculate total exposure as percentage of NLV
-                total_exposure = 0
-                for pos in self.positions.values():
-                    if isinstance(pos, OptionPosition):
-                        pos_value = abs(pos.current_price * pos.contracts * 100)
-                    else:
-                        pos_value = abs(pos.current_price * pos.contracts)
-                    total_exposure += pos_value
+                pos_pct = pos_value / current_value if current_value > 0 else 0
                 
-                exposure_pct = total_exposure / current_value if current_value > 0 else 0
-                self.logger.info(f"Total Position Exposure: {exposure_pct:.1%} of NLV")
-                self.logger.info(f"Net Liq: ${current_value:.0f}")
+                # Get margin requirement if available
+                margin = pos.get_margin_requirement() if hasattr(pos, 'get_margin_requirement') else 0
                 
-                # Get portfolio metrics for additional information
-                metrics = self.get_portfolio_metrics()
-                greeks = self.get_portfolio_greeks()
+                # Get underlying price
+                underlying_price = pos.underlying_price if hasattr(pos, 'underlying_price') else 0
                 
-                self.logger.info(f"  Cash Balance: ${self.cash_balance:.0f}")
-                self.logger.info(f"  Total Liability: ${-self.position_value:.0f}")
-                self.logger.info(f"Total Margin Requirement: ${metrics['total_margin']:.0f}")
-                self.logger.info(f"Available Margin: ${metrics['available_margin']:.0f}")
-                self.logger.info(f"Margin-Based Leverage: {metrics['current_leverage']:.2f}")
+                # Get DTE (days to expiry)
+                dte = pos.days_to_expiry if hasattr(pos, 'days_to_expiry') else 0
                 
-                # Portfolio Greek risk section
-                self.logger.info("\nPortfolio Greek Risk:")
-                self.logger.info(f"  Option Delta: {greeks['delta']:.3f} (${greeks['dollar_delta']:.2f})")
-                self.logger.info(f"  Gamma: {greeks['gamma']:.6f} (${greeks['dollar_gamma']:.2f} per 1% move)")
-                self.logger.info(f"  Theta: ${greeks['dollar_theta']:.2f} per day")
-                self.logger.info(f"  Vega: ${greeks['dollar_vega']:.2f} per 1% IV")
-                
-                # Get performance metrics if we have enough history
-                if len(self.daily_returns) >= 5:
-                    perf = self.get_performance_metrics()
-                    self.logger.info("\nRolling Metrics:")
-                    self.logger.info(f"  Sharpe: {perf['sharpe_ratio']:.2f}, Volatility: {perf['volatility']:.2%}")
-                
-                # Print position table
-                self.logger.info("\nOpen Trades Table:")
-                self.logger.info("-" * 120)
-                self.logger.info(f"{'Symbol':<20}{'Contracts':>10}{'Entry':>8}{'Current':>10}{'Value':>10}{'NLV%':>8}{'Delta':>10}")
-                self.logger.info("-" * 120)
-                
-                for symbol, pos in self.positions.items():
-                    if isinstance(pos, OptionPosition):
-                        pos_value = pos.current_price * pos.contracts * 100
-                    else:
-                        pos_value = pos.current_price * pos.contracts
-                    
-                    pos_pct = pos_value / current_value if current_value > 0 else 0
-                    
-                    self.logger.info(f"{symbol:<20}{pos.contracts:>10d}${pos.avg_entry_price:>6.2f}${pos.current_price:>8.2f}${pos_value:>9.0f}{pos_pct:>7.1%}{pos.current_delta:>10.3f}")
-                
-                self.logger.info("-" * 120)
-                self.logger.info(f"TOTAL{' ':>30}${self.position_value:>9.0f}{exposure_pct:>7.1%}")
-                self.logger.info("-" * 120)
-                self.logger.info("===========================================")
-                
-                # Record daily return with components
-                self.daily_returns.append({
-                    'date': current_date,
-                    'return': daily_return,
-                    'value': current_value,
-                    'pnl': current_value - prev_value,
-                    'unrealized_pnl_change': current_value - prev_value - self.today_realized_pnl,
-                    'realized_pnl': self.today_realized_pnl
-                })
+                self.logger.info(f"{symbol:<20}{pos.contracts:>10d}${pos.avg_entry_price:>6.2f}${pos.current_price:>8.2f}${pos_value:>9.0f}{pos_pct:>7.1%}${underlying_price:>8.2f}{pos.current_delta:>10.3f}{pos.current_gamma:>10.6f}${pos.current_theta:>9.2f}${pos.current_vega:>9.2f}${margin:>9.0f}{dte:>5d}")
+            
+            self.logger.info("-" * 120)
+            self.logger.info(f"TOTAL{' ':>30}${self.position_value:>9.0f}{exposure_pct:>7.1%}{' ':>20}${self.get_margin_requirement():>9.0f}")
+            self.logger.info("-" * 120)
+            self.logger.info("===========================================")
+            
+            # Record daily return with components
+            self.daily_returns.append({
+                'date': current_date,
+                'return': daily_return,
+                'value': current_value,
+                'pnl': current_value - prev_value,
+                'unrealized_pnl_change': current_value - prev_value - self.today_realized_pnl,
+                'realized_pnl': self.today_realized_pnl
+            })
+        elif updated_positions:
+            # Just log that we updated without the full summary
+            self.logger.debug(f"Updated market data for {len(updated_positions)} positions without logging POST-TRADE summary")
                 
         # Handle expired options
         for symbol, reason in positions_to_remove:
@@ -672,21 +1091,48 @@ class Portfolio:
     def _update_portfolio_value(self):
         """
         Update total portfolio value based on current positions.
+        
+        Net liquidation value (NLV) should equal:
+        Cash Balance - Short Position Liabilities + Long Position Values
         """
-        # Calculate position value
-        position_value = 0
+        # Track liabilities (short positions) and assets (long positions) separately
+        short_option_value = 0
+        long_position_value = 0
+        
         for pos in self.positions.values():
             if isinstance(pos, OptionPosition):
-                position_value += pos.current_price * pos.contracts * 100
+                # For options, calculate contract value (price * contracts * 100)
+                position_value = pos.current_price * pos.contracts * 100
+                
+                if pos.is_short:
+                    # For short options, this is a liability
+                    short_option_value += position_value
+                else:
+                    # For long options, this is an asset
+                    long_position_value += position_value
             else:
-                position_value += pos.current_price * pos.contracts
+                # For non-options (like stocks)
+                position_value = pos.current_price * pos.contracts
+                
+                if hasattr(pos, 'is_short') and pos.is_short:
+                    short_option_value += position_value  # Short stock would be a liability
+                else:
+                    long_position_value += position_value  # Long stock would be an asset
 
-        # Update total value
-        self.position_value = position_value
-        self.total_value = self.cash_balance + position_value
+        # Store values for reporting and other calculations
+        self.short_option_value = short_option_value
+        self.long_position_value = long_position_value
+        
+        # The total "position value" for reporting purposes
+        self.position_value = long_position_value
+        
+        # Calculate net liquidation value (NLV)
+        # NLV = Cash + Long Assets - Short Liabilities
+        self.total_value = self.cash_balance + long_position_value - short_option_value
 
-        # Record in equity history
-        self.equity_history[datetime.now()] = self.total_value
+        # Record in equity history - use current date/time as key
+        current_time = datetime.now()
+        self.equity_history[current_time] = self.total_value
 
     def update_positions(self, current_date, daily_data):
         """
@@ -831,3 +1277,316 @@ class Portfolio:
             df = df.sort_values('date')
             
         return df
+
+    def get_total_liability(self) -> float:
+        """
+        Calculate the total liability of the portfolio based on short positions.
+        
+        Returns:
+            float: Total liability value in dollars
+        """
+        # If we've already calculated the short option value, use it
+        if hasattr(self, 'short_option_value'):
+            return self.short_option_value
+            
+        # Otherwise calculate it (legacy method)
+        total_liability = 0
+        for position in self.positions.values():
+            if position.is_short:
+                # Use entry price if current price is 0
+                price = position.current_price if position.current_price > 0 else position.avg_entry_price
+                
+                if isinstance(position, OptionPosition):
+                    position_value = price * position.contracts * 100
+                else:
+                    position_value = price * position.contracts
+                    
+                total_liability += position_value
+        
+        return total_liability
+
+    def get_total_position_exposure(self) -> float:
+        """
+        Calculate the total position exposure as a ratio of portfolio value.
+        
+        Returns:
+            float: Ratio of total position exposure to portfolio value (0-1)
+        """
+        # Calculate the notional value of all positions
+        total_exposure = 0
+        for position in self.positions.values():
+            # Use entry price if current price is 0
+            price = position.current_price if position.current_price > 0 else position.avg_entry_price
+            
+            if isinstance(position, OptionPosition):
+                position_value = abs(price * position.contracts * 100)
+            else:
+                position_value = abs(price * position.contracts)
+            
+            total_exposure += position_value
+        
+        portfolio_value = self.get_portfolio_value()
+        
+        # Calculate exposure as percentage of portfolio value
+        if portfolio_value > 0:
+            return total_exposure / portfolio_value
+        else:
+            return 0
+    
+    def get_open_positions(self) -> list:
+        """
+        Get all open positions.
+        
+        Returns:
+            list: List of Position objects
+        """
+        return list(self.positions.values())
+
+    def get_net_liquidation_value(self) -> float:
+        """
+        Get the net liquidation value (NLV) of the portfolio.
+        
+        NLV = Cash + Long Assets - Short Liabilities
+        
+        Returns:
+            float: Net liquidation value in dollars
+        """
+        # Update portfolio value first (this will correctly calculate NLV)
+        self._update_portfolio_value()
+        
+        # Return the calculated total value
+        return self.total_value
+
+    def get_cash_balance(self) -> float:
+        """
+        Get the current cash balance.
+        
+        Returns:
+            float: Cash balance in dollars
+        """
+        return self.cash_balance
+
+    def get_hedge_value(self) -> float:
+        """
+        Get the current value of hedge positions.
+        
+        Returns:
+            float: Hedge value in dollars, defaults to 0 if not implemented
+        """
+        # This is a placeholder - actual hedge values would be implemented
+        # in a derived class that implements hedging
+        return 0
+
+    def get_total_margin_requirement(self) -> float:
+        """
+        Get the total margin requirement for all positions.
+        
+        Returns:
+            float: Total margin requirement in dollars
+        """
+        total_margin = 0
+        for position in self.positions.values():
+            if hasattr(position, 'calculate_margin_requirement'):
+                margin = position.calculate_margin_requirement(1.0)  # Use basic margin without leverage
+                total_margin += margin
+        return total_margin
+
+    def get_available_margin(self) -> float:
+        """
+        Calculate available margin for new positions.
+        
+        Returns:
+            float: Available margin in dollars
+        """
+        # NLV - Margin Requirements = Available Margin
+        nlv = self.get_net_liquidation_value()
+        margin_req = self.get_total_margin_requirement()
+        
+        # Return cash balance minus margin requirements
+        # Make sure NLV is not less than zero
+        if nlv <= 0:
+            return 0
+            
+        return nlv - margin_req
+
+    def get_margin_based_leverage(self) -> float:
+        """
+        Calculate margin-based leverage.
+        
+        Returns:
+            float: Leverage ratio
+        """
+        portfolio_value = self.get_portfolio_value()
+        total_margin = self.get_total_margin_requirement()
+        return total_margin / portfolio_value if portfolio_value > 0 else 0
+
+    def get_option_delta(self) -> float:
+        """
+        Get the total delta from option positions only.
+        
+        Returns:
+            float: Option delta
+        """
+        greeks = self.get_portfolio_greeks()
+        return greeks.get('delta', 0)
+
+    def get_hedge_delta(self) -> float:
+        """
+        Get the delta from hedge positions.
+        
+        Returns:
+            float: Hedge delta, defaults to 0 if not implemented
+        """
+        # This is a placeholder - actual hedge delta would be implemented
+        # in a derived class that implements hedging
+        return 0
+
+    def get_total_delta(self) -> float:
+        """
+        Get the total portfolio delta.
+        
+        Returns:
+            float: Total portfolio delta
+        """
+        return self.get_option_delta() + self.get_hedge_delta()
+
+    def get_gamma(self) -> float:
+        """
+        Get the portfolio gamma.
+        
+        Returns:
+            float: Portfolio gamma
+        """
+        greeks = self.get_portfolio_greeks()
+        return greeks.get('gamma', 0)
+
+    def get_theta(self) -> float:
+        """
+        Get the portfolio theta.
+        
+        Returns:
+            float: Portfolio theta
+        """
+        greeks = self.get_portfolio_greeks()
+        return greeks.get('dollar_theta', 0)
+
+    def get_vega(self) -> float:
+        """
+        Get the portfolio vega.
+        
+        Returns:
+            float: Portfolio vega
+        """
+        greeks = self.get_portfolio_greeks()
+        return greeks.get('dollar_vega', 0)
+
+    def get_daily_return(self) -> float:
+        """
+        Get the daily return in dollars.
+        
+        Returns:
+            float: Daily return in dollars
+        """
+        if not self.daily_returns:
+            return 0
+        return self.daily_returns[-1].get('pnl', 0)
+
+    def get_daily_return_percent(self) -> float:
+        """
+        Get the daily return as a percentage.
+        
+        Returns:
+            float: Daily return as a percentage (0-1)
+        """
+        if not self.daily_returns:
+            return 0
+        return self.daily_returns[-1].get('return', 0)
+
+    def get_option_pnl(self) -> float:
+        """
+        Get the option P&L component.
+        
+        Returns:
+            float: Option P&L in dollars
+        """
+        if not self.daily_returns:
+            return 0
+        return self.daily_returns[-1].get('unrealized_pnl_change', 0)
+
+    def get_hedge_pnl(self) -> float:
+        """
+        Get the hedge P&L component.
+        
+        Returns:
+            float: Hedge P&L in dollars, defaults to 0 if not implemented
+        """
+        # This is a placeholder - actual hedge PnL would be implemented
+        # in a derived class that implements hedging
+        return 0
+
+    def get_rolling_metrics(self) -> dict:
+        """
+        Get rolling performance metrics.
+        
+        Returns:
+            dict: Dictionary of rolling metrics
+        """
+        # If we don't have enough history, return empty metrics
+        if not hasattr(self, 'daily_returns') or len(self.daily_returns) < 5:
+            self.logger.debug(f"Not enough history for rolling metrics: {len(self.daily_returns) if hasattr(self, 'daily_returns') else 0} observations")
+            if hasattr(self, 'daily_returns'):
+                self.logger.debug(f"Daily returns: {self.daily_returns}")
+            return {
+                'expanding_sharpe': 0,
+                'expanding_volatility': 0,
+                'short_sharpe': 0,
+                'short_volatility': 0,
+                'medium_sharpe': 0,
+                'medium_volatility': 0,
+                'long_sharpe': 0,
+                'long_volatility': 0
+            }
+        
+        # Otherwise, calculate metrics from performance history
+        metrics = {}
+        
+        # Create a DataFrame from daily returns
+        df = pd.DataFrame(self.daily_returns)
+        self.logger.debug(f"Daily returns DataFrame: {df}")
+        
+        df['date'] = pd.to_datetime(df['date'])
+        df.set_index('date', inplace=True)
+        
+        # Calculate expanding window metrics (all available history)
+        returns_series = df['return']
+        
+        # Force calculation even with limited data
+        self.logger.debug(f"Calculating rolling metrics with {len(returns_series)} observations")
+        self.logger.debug(f"Returns series: {returns_series}")
+        
+        # Calculate expanding window metrics (all available history)
+        metrics['expanding_volatility'] = returns_series.std() * np.sqrt(252)  # Annualized
+        metrics['expanding_sharpe'] = (returns_series.mean() * 252) / (returns_series.std() * np.sqrt(252)) if returns_series.std() > 0 else 0
+        
+        # Calculate short window metrics (21 trading days)
+        window_size = min(21, len(returns_series))
+        short_window = returns_series.iloc[-window_size:]
+        metrics['short_volatility'] = short_window.std() * np.sqrt(252)
+        metrics['short_sharpe'] = (short_window.mean() * 252) / (short_window.std() * np.sqrt(252)) if short_window.std() > 0 else 0
+        
+        # Calculate medium window metrics (63 trading days)
+        window_size = min(63, len(returns_series))
+        medium_window = returns_series.iloc[-window_size:]
+        metrics['medium_volatility'] = medium_window.std() * np.sqrt(252)
+        metrics['medium_sharpe'] = (medium_window.mean() * 252) / (medium_window.std() * np.sqrt(252)) if medium_window.std() > 0 else 0
+        
+        # Calculate long window metrics (252 trading days)
+        window_size = min(252, len(returns_series))
+        long_window = returns_series.iloc[-window_size:]
+        metrics['long_volatility'] = long_window.std() * np.sqrt(252)
+        metrics['long_sharpe'] = (long_window.mean() * 252) / (long_window.std() * np.sqrt(252)) if long_window.std() > 0 else 0
+        
+        # Log that we calculated the metrics
+        self.logger.debug(f"Calculated rolling metrics: {metrics}")
+        
+        return metrics
