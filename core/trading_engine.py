@@ -26,6 +26,7 @@ if __name__ == "__main__":
     from core.margin import MarginCalculator, OptionMarginCalculator, SPANMarginCalculator
     from core.hedging import HedgingManager
     from core.reporting import ReportingSystem
+    from core.risk_manager import RiskManager
 else:
     # When imported as a module, use relative imports
     from .data_manager import DataManager
@@ -34,6 +35,7 @@ else:
     from .margin import MarginCalculator, OptionMarginCalculator, SPANMarginCalculator
     from .hedging import HedgingManager
     from .reporting import ReportingSystem
+    from .risk_manager import RiskManager
 
 
 class LoggingManager:
@@ -408,6 +410,7 @@ class TradingEngine:
         self.hedging_manager = None
         self.margin_calculator = None
         self.reporting_system = None
+        self.risk_manager = None
         
         # If strategy is provided, use it; otherwise create from config
         self.strategy = strategy
@@ -422,10 +425,11 @@ class TradingEngine:
         
     def _init_components(self) -> None:
         """Initialize trading engine components."""
-        # Get configuration values
-        initial_capital = self.config.get('initial_capital', 100000)
-        max_position_size = self.config.get('max_position_size', 0.05)
-        max_portfolio_delta = self.config.get('max_portfolio_delta', 0.20)
+        # Get configuration values from the portfolio section
+        portfolio_config = self.config.get('portfolio', {})
+        initial_capital = portfolio_config.get('initial_capital', 100000)
+        max_position_size = portfolio_config.get('max_position_size_pct', 0.05)
+        max_portfolio_delta = portfolio_config.get('max_portfolio_delta', 0.20)
         
         # Create portfolio
         self.portfolio = Portfolio(
@@ -434,6 +438,13 @@ class TradingEngine:
             max_portfolio_delta=max_portfolio_delta,
             logger=self.logger
         )
+        
+        # Create risk manager
+        self.risk_manager = RiskManager(
+            config=self.config,
+            logger=self.logger
+        )
+        self.logger.info(f"Risk manager initialized with max position size: {max_position_size:.2%}")
         
         # Create margin calculator
         margin_config = self.config.get('margin', {})
@@ -453,6 +464,7 @@ class TradingEngine:
         if hedging_enabled:
             self.hedging_manager = HedgingManager(
                 config=hedging_config,
+                portfolio=self.portfolio,
                 logger=self.logger
             )
             self.logger.info(f"Hedging enabled: mode={hedging_config.get('mode', 'delta_neutral')}")
@@ -971,10 +983,12 @@ class TradingEngine:
         
         # Check debug flags
         if hasattr(self, 'hedging_manager') and self.hedging_manager:
-            self.logger.info(f"[DEBUG] CPD Hedging enabled: {self.hedging_manager.enabled}")
+            self.logger.info(f"[DEBUG] CPD Hedging enabled: {self.hedging_manager.enable_hedging}")
             self.logger.info(f"[DEBUG] Hedge mode: {self.hedging_manager.hedge_mode}")
             if hasattr(self.hedging_manager, 'target_delta_ratio'):
-                self.logger.info(f"[DEBUG] Target Dollar Delta/NLV Ratio: {self.hedging_manager.target_delta_ratio:.4f}")
+                self.logger.info(f"[DEBUG] Target delta ratio: {self.hedging_manager.target_delta_ratio}")
+            if hasattr(self.hedging_manager, 'target_portfolio_delta'):
+                self.logger.info(f"[DEBUG] Target portfolio delta: {self.hedging_manager.target_portfolio_delta}")
         
         # Execute Risk Scaling
         self.logger.info("--------------------------------------------------")
@@ -1103,7 +1117,7 @@ class TradingEngine:
             self.logger.info("No new trade signals generated")
         
         # Manage hedging separately after signals have been executed
-        if hasattr(self, 'hedging_manager') and self.hedging_manager and self.hedging_manager.enabled:
+        if hasattr(self, 'hedging_manager') and self.hedging_manager and self.hedging_manager.enable_hedging:
             try:
                 # Log pre-hedge metrics
                 self.logger.info("--------------------------------------------------")
@@ -1111,7 +1125,13 @@ class TradingEngine:
                 self.logger.info("--------------------------------------------------")
                 
                 # Execute hedging
-                self.hedging_manager.update_hedge(current_date, daily_data, self.portfolio)
+                hedge_signals = self.hedging_manager.generate_hedge_signals(daily_data, current_date)
+                
+                if hedge_signals:
+                    self.logger.info(f"Generated {len(hedge_signals)} hedging signals")
+                    self._execute_signals(hedge_signals, daily_data, current_date)
+                else:
+                    self.logger.info("No hedge adjustments needed")
                 
             except Exception as e:
                 self.logger.error(f"Error in hedging: {e}")
@@ -1172,7 +1192,9 @@ class TradingEngine:
         
         # Add hedge info if available
         if hasattr(self, 'hedging_manager') and self.hedging_manager:
-            hedge_pnl = latest_return.get('realized_pnl', 0)
+            # Get hedge PnL from portfolio if available, otherwise use 0
+            hedge_position = self.portfolio.positions.get(self.hedging_manager.hedge_symbol)
+            hedge_pnl = hedge_position.realized_pnl if hedge_position else 0
             self.logger.info(f"  Self Hedge (Hedge PnL): ${hedge_pnl:,.2f}")
         
         # Margin info
@@ -1436,7 +1458,7 @@ class TradingEngine:
         
         # Process each signal
         for signal in signals:
-            action = signal.get('action')
+            action = signal.get('action', '').lower()  # Normalize action to lowercase
             symbol = signal.get('symbol')
             
             # Map buy/sell actions to open with appropriate is_short flag
@@ -1454,10 +1476,48 @@ class TradingEngine:
             # For open positions
             if action == 'open':
                 # Get the required data for opening a position
-                quantity = signal.get('quantity', 1)
+                base_quantity = signal.get('quantity', 1)  # Base quantity from strategy
                 price = signal.get('price')
                 position_type = signal.get('type', 'option')
                 is_short = signal.get('is_short', True)
+                
+                # Calculate portfolio metrics for position sizing
+                portfolio_metrics = self.portfolio.get_portfolio_metrics()
+                
+                # Get instrument data for position sizing
+                instrument_data = signal.get('instrument_data', {})
+                
+                # Use RiskManager to determine actual position size
+                if hasattr(self, 'risk_manager') and instrument_data and position_type == 'option':
+                    # Set up data for position sizing
+                    sizing_data = instrument_data.copy()
+                    if 'price' not in sizing_data:
+                        sizing_data['price'] = price
+                    if 'symbol' not in sizing_data and 'OptionSymbol' in sizing_data:
+                        sizing_data['symbol'] = sizing_data['OptionSymbol']
+                        
+                    # Calculate the appropriate position size with default risk scaling
+                    risk_scaling = 1.0  # Default risk scaling
+                    if hasattr(self, 'current_risk_scaling'):
+                        risk_scaling = self.current_risk_scaling
+                        
+                    scaled_quantity = self.risk_manager.calculate_position_size(
+                        sizing_data,
+                        portfolio_metrics,
+                        risk_scaling
+                    )
+                    
+                    # Use the scaled quantity if it's valid
+                    if scaled_quantity > 0:
+                        quantity = scaled_quantity
+                        self.logger.info(f"[Position Sizing] Scaled quantity from {base_quantity} to {quantity} contracts")
+                    else:
+                        quantity = base_quantity
+                        self.logger.warning(f"[Position Sizing] Failed to scale position, using base quantity: {base_quantity}")
+                else:
+                    quantity = base_quantity
+                    if position_type == 'option':
+                        self.logger.warning(f"[Position Sizing] No risk manager available or missing data, using base quantity: {base_quantity}")
                 
                 # Log the signal
                 self.logger.info(f"[TradeManager] Opening {quantity} {'short' if is_short else 'long'} {position_type} {symbol}")
@@ -1468,16 +1528,13 @@ class TradingEngine:
                     execution_data.update(signal['execution_data'])
                     
                 # Get instrument data
-                instrument_data = None
-                if 'instrument_data' in signal:
-                    instrument_data = signal['instrument_data']
-                else:
+                if not instrument_data:
                     # Look up in daily data
                     for _, row in daily_data.iterrows():
                         if 'OptionSymbol' in row and row['OptionSymbol'] == symbol:
                             instrument_data = row.to_dict()
                             break
-                            
+                
                 # Execute the open position
                 if instrument_data:
                     # Add position
@@ -1612,8 +1669,10 @@ if __name__ == "__main__":
     except (FileNotFoundError, json.JSONDecodeError):
         # Use fallback config
         config = {
-            "initial_capital": 100000,
-            "max_position_size": 0.05,
+            "portfolio": {
+                "initial_capital": 100000,
+                "max_position_size_pct": 0.05
+            },
             "strategy": {
                 "name": "SampleStrategy",
                 "type": "SampleStrategy"

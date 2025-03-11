@@ -43,8 +43,8 @@ class HedgingManager:
         self.config = config
         
         # Extract hedging parameters
-        self.enable_hedging = config.get('enable_hedging', False)
-        self.hedge_mode = config.get('hedge_mode', 'ratio').lower()
+        self.enable_hedging = config.get('enabled', False)
+        self.hedge_mode = config.get('mode', 'delta_neutral').lower()
         
         # Get delta target
         self.delta_target = config.get('delta_target', 0.0)
@@ -257,7 +257,7 @@ class HedgingManager:
             if underlying_price > 0:
                 # Create hedge signal
                 hedge_signal = {
-                    'action': 'SELL' if requirements['direction'] == 'sell' else 'BUY',
+                    'action': 'sell' if requirements['direction'] == 'sell' else 'buy',
                     'symbol': self.hedge_symbol,
                     'quantity': requirements['contracts'],
                     'price': underlying_price,

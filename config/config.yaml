@@ -17,6 +17,17 @@ portfolio:
   initial_capital: 100000
   max_leverage: 12
   max_nlv_percent: 1.0
+  max_position_size_pct: 0.25  # 25% per position
+  max_portfolio_delta: 0.50    # 50% of portfolio value as max delta exposure
+
+# Hedging configuration (moved from strategy section)
+hedging:
+  enabled: true
+  mode: "ratio"
+  hedge_with_underlying: true  # Use underlying price from option data for hedging
+  target_delta_ratio: 1.75     # Changed from hedge_target_ratio
+  delta_tolerance: 0.05        # Added tolerance parameter
+  hedge_symbol: "SPY"
 
 # Risk management settings
 risk:
@@ -33,13 +44,6 @@ risk:
 # Strategy parameters
 strategy:
   name: "ThetaDecayStrategy"
-  # Hedging configuration
-  enable_hedging: true
-  hedge_mode: "ratio"
-  hedge_with_underlying: true  # Use underlying price from option data for hedging
-  constant_portfolio_delta: 0.05
-  hedge_target_ratio: 1.75
-  hedge_symbol: "SPY"
   # Option selection parameters
   days_to_expiry_min: 60
   days_to_expiry_max: 90
