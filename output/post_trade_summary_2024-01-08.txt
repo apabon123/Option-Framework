@@ -1,25 +1,25 @@
 ============================================================
 POST-TRADE Summary [2024-01-08]:
-Daily P&L: $2.00 (0.00%)
-  Option PnL: $0.00
+Daily P&L: $1021.90 (0.15%)
+  Option PnL: $139932.93
   Hedge PnL: $0.00
-Open Trades: 2
-Total Position Exposure: 0.1% of NLV
-Net Liq: $100004.50
-  Cash Balance: $100106.00
-  Total Liability: $101.50
+Open Trades: 3
+Total Position Exposure: 158.9% of NLV
+Net Liq: $674147.80
+  Cash Balance: $-365721.10
+  Total Liability: $15641.50
   Self Hedge (Hedge PnL): $0.00
-Total Margin Requirement: $101.50
-Available Margin: $99903.00
-Margin-Based Leverage: 0.00
+Total Margin Requirement: $215034.51
+Available Margin: $459113.29
+Margin-Based Leverage: 0.32
 
 Portfolio Greek Risk:
-  Option Delta: -0.101 ($-1006.00)
+  Option Delta: -15.236 ($-152356.00)
   Hedge Delta: 0.000 ($0.00)
-  Total Delta: -0.101 ($-1006.00)
-  Gamma: -0.008500 ($-85.00 per 1% move)
-  Theta: $11.55 per day
-  Vega: $-45.78 per 1% IV
+  Total Delta: -15.236 ($-152356.00)
+  Gamma: -1.271000 ($-12710.00 per 1% move)
+  Theta: $1730.11 per day
+  Vega: $-6858.12 per 1% IV
 
 Rolling Metrics:
   Expanding Window (all obs, min 5 required): Sharpe: 0.00, Volatility: 0.00%
@@ -32,10 +32,11 @@ Open Trades Table:
 ------------------------------------------------------------------------------------------------------------------------
 Symbol           Contracts   Entry  Current      Value  NLV% Underlying      Delta      Gamma      Theta       Vega     Margin   DTE
 ------------------------------------------------------------------------------------------------------------------------
-SPY240328C00518000          1 $ 0.50 $  0.45 $   45.50  0.0% $  474.60     0.046  0.004000 $   -5.42 $   21.48 $       0    80
-SPY240328C00516000          1 $ 0.56 $  0.56 $   56.00  0.1% $  474.60     0.054  0.004500 $   -6.13 $   24.30 $       0    80
+SPY240328C00518000         41 $ 0.50 $  0.45 $ 1865.50  0.3% $  474.60     0.046  0.004000 $   -5.42 $   21.48 $       0    80
+SPY                   2224 $470.73 $474.60 $105551040.00 15657.0% $  472.65     0.000  0.000000 $    0.00 $    0.00 $       0     0
+SPY240328C00516000        246 $ 0.56 $  0.56 $13776.00  2.0% $  474.60     0.054  0.004500 $   -6.13 $   24.30 $       0    80
 ------------------------------------------------------------------------------------------------------------------------
-TOTAL                                       $  101.50  0.1%                               $       0
+TOTAL                                       $105566681.50 15659.3%                               $       0
 ------------------------------------------------------------------------------------------------------------------------
 ============================================================
 

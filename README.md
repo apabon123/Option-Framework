@@ -1,84 +1,174 @@
-# Python Option Framework
+# Option Trading Framework
 
-A modular backtesting framework designed for options trading strategies—especially those focused on theta decay and delta hedging.
+A comprehensive options trading framework designed for backtesting and simulating options trading strategies with sophisticated risk management and dynamic delta hedging capabilities.
 
-## Introduction
+## Overview
 
-The Python Option Framework uses an object-oriented design to facilitate extensibility and maintainability while offering robust risk management and detailed performance reporting. It's specifically designed for options trading strategies with a focus on realistic simulations.
+This framework provides a complete environment for developing, testing, and evaluating options trading strategies. It features accurate Greek calculations, dynamic delta hedging, position management, and detailed performance reporting.
 
-## Features
+## Recent Changes
 
-- **Accurate Backtesting**: Simulate realistic options trading scenarios with advanced risk management
-- **Modular and Extensible Design**: Independent components that can be extended or replaced as needed
-- **Robust Risk Management**: Delta hedging and SPAN margin calculations
-- **Comprehensive Reporting**: Interactive HTML reports and structured output files
-- **Business Logic Verification**: Detailed output files with predefined structure for easy review of trading metrics
+- **Greek Sign Convention Fixes**: Implemented proper handling of signs for delta, gamma, theta, and vega for both short and long positions in calculation and display contexts
+- **Position Storage Improvements**: Centralized position storage in the Position Inventory as a single source of truth
+- **Hedging Logic Refinement**: Fixed boundary adjustments in the hedging algorithm to prevent over-hedging
+- **Display Formatting**: Improved display of Greeks in trading reports and logs for better readability
 
-## Installation
+## Architecture
 
-### Prerequisites
+The framework is built with a modular design:
 
-- Python 3.8+ 
-- Required packages: pandas, numpy, matplotlib, pyyaml
+### Core Components
 
-### Setup
+- **Position Management (`position.py`)**:
+  - `Position`: Base class for all financial instrument positions
+  - `OptionPosition`: Specialized class for options with Greek calculations
+  - Handles accurate tracking of P&L, risk metrics, and position lifecycle
+  - Implements `get_greeks(for_display=False)` with proper sign conventions
 
-1. Clone the repository:
-```bash
-git clone https://github.com/yourusername/option-framework.git
-cd option-framework
-```
+- **Position Inventory (`position_inventory.py`)**:
+  - Central repository for all positions as the single source of truth
+  - Aggregates portfolio-level Greeks and risk metrics
+  - Provides consistent access to position data for all components
 
-2. Install dependencies:
-```bash
-pip install -r requirements.txt
-```
+- **Hedging System (`hedging.py`)**:
+  - Implements dynamic delta hedging strategies
+  - Supports ratio-based and constant-delta approaches
+  - Uses a "hedge to boundary" approach to prevent over-hedging
 
-3. Configure the system by editing `config/config.yaml`
+- **Trading Engine (`trading_engine.py`)**:
+  - Coordinates the entire trading simulation
+  - Processes market data updates
+  - Executes trades and manages the portfolio
+  - Formats and displays position data with proper Greek signs
+
+### Key Features
+
+- **Accurate Greek Calculations**: Proper handling of Greek signs for both display and calculation purposes
+- **Sophisticated Hedging**: Dynamic delta hedging with configurable tolerance bands
+- **Position Management**: Complete position lifecycle tracking with P&L calculation
+- **Risk Management**: Comprehensive risk metrics and exposure monitoring
+- **Performance Reporting**: Detailed reports on strategy performance
+
+## Position and Greek Sign Handling
+
+The framework implements a sophisticated approach to handling option positions and their Greeks:
+
+### Option Position Storage
+
+1. **Position Creation**:
+   - Option positions are created from market data with their original Greek values
+   - The system tracks both long and short positions with proper accounting
+
+2. **Greek Sign Storage**:
+   - Greeks are initially stored with their raw values from the input data
+   - For short positions, signs are adjusted during position initialization
+   - The `update_market_data` method adjusts signs based on position type when new data arrives
+
+3. **Greek Retrieval System**:
+   - The `get_greeks(for_display)` method provides Greeks with appropriate signs based on context
+   - `for_display=False`: Returns Greeks with mathematically correct signs for calculations
+   - `for_display=True`: Returns Greeks with conventional signs for display purposes
+
+### Greek Sign Conventions
+
+#### Calculation Mode (`for_display=False`):
+- **Delta**: 
+  - Long Calls: Positive
+  - Long Puts: Negative
+  - Short Calls: Negative
+  - Short Puts: Positive (critical for hedging calculations)
+- **Gamma**:
+  - Long Positions: Positive
+  - Short Positions: Negative
+- **Theta**:
+  - Long Positions: Negative
+  - Short Positions: Positive
+- **Vega**:
+  - Long Positions: Positive
+  - Short Positions: Negative
+
+#### Display Mode (`for_display=True`):
+Additional sign adjustments for clearer reporting of risk exposure in UI and logs.
+
+## Hedging Strategy
+
+The framework implements a "hedge to boundary" approach:
+- Maintains portfolio delta within a target range defined by tolerance
+- When delta exceeds the upper boundary: Hedges down to the upper boundary
+- When delta falls below the lower boundary: Hedges up to the lower boundary
+- Within boundaries: No hedging required
+
+This prevents over-hedging and reduces unnecessary trading costs.
 
 ## Usage
 
-Run a backtest with the default configuration:
-
 ```bash
-python Main.py
+# Run a backtest with verbose output
+python main.py -v
+
+# Run with specific configuration
+python main.py --config custom_config.yaml
+
+# Generate a performance report
+python main.py --report
 ```
 
-Run with a specific configuration file:
+### Configuration
 
-```bash
-python Main.py -c config/my_custom_config.yaml
-```
-
-Override settings from command line:
-
-```bash
-python Main.py --strategy ThetaDecayStrategy --start-date 2024-01-01 --end-date 2024-12-31 --verbose
-```
-
-## Configuration
-
-The system is configured using YAML files. Key configuration sections include:
-
-- **Paths**: File locations for input/output data
-- **Dates**: Backtesting period
-- **Portfolio**: Capital and risk settings
-- **Strategy**: Strategy selection and parameters
-- **Risk**: Risk management settings
-- **Margin Management**: Margin calculation parameters
-- **Reporting**: Output and logging settings
-
-Example configuration:
+Main configuration is handled through `config/config.yaml`:
 
 ```yaml
+# Portfolio settings
+portfolio:
+  initial_capital: 100000
+  max_leverage: 12
+  max_nlv_percent: 1.0
+  max_position_size_pct: 0.25
+
+# Hedging configuration
+hedging:
+  enabled: true
+  mode: "ratio"
+  hedge_with_underlying: true
+  target_delta_ratio: 0.1     # Target delta as percentage of NLV
+  delta_tolerance: 0.3        # Tolerance in percentage of NLV
+  hedge_symbol: "SPY"
+  max_hedge_ratio: 3.0
+
 # Strategy parameters
 strategy:
   name: "ThetaDecayStrategy"
-  enable_hedging: true
-  hedge_mode: "ratio"
-  delta_target: -0.05
+  days_to_expiry_min: 60
+  days_to_expiry_max: 90
+  is_short: true
+  delta_target: -0.2
+  delta_tolerance: 0.01
   profit_target: 0.65
+  stop_loss_threshold: 2.5
+  close_days_to_expiry: 14
 ```
+
+## Input Data Format
+
+The framework expects option data with the following format:
+- Puts have negative delta (market standard for long puts)
+- Calls have positive delta (market standard for long calls)
+- The system handles adjusting signs for short positions internally
+
+## Dependencies
+
+- Python 3.8+
+- pandas
+- numpy
+- matplotlib (for visualization)
+- tabulate (for formatted output)
+
+## Development
+
+When modifying the codebase, ensure:
+- The `get_greeks(for_display=False)` method is used for all calculation contexts
+- The `get_greeks(for_display=True)` method is used for display purposes
+- The hedging system has the correct Greek signs for accurate delta calculations
 
 ## Project Structure
 

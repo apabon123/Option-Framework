@@ -1,41 +1,42 @@
 ============================================================
 POST-TRADE Summary [2024-01-11]:
-Daily P&L: $-27.50 (-0.03%)
-  Option PnL: $0.00
+Daily P&L: $3598.46 (0.53%)
+  Option PnL: $779747.16
   Hedge PnL: $0.00
-Open Trades: 2
-Total Position Exposure: 0.1% of NLV
-Net Liq: $100015.00
-  Cash Balance: $100106.00
-  Total Liability: $91.00
+Open Trades: 3
+Total Position Exposure: 83.3% of NLV
+Net Liq: $5444589.74
+  Cash Balance: $938961.94
+  Total Liability: $13981.00
   Self Hedge (Hedge PnL): $0.00
-Total Margin Requirement: $91.00
-Available Margin: $99924.00
-Margin-Based Leverage: 0.00
+Total Margin Requirement: $905137.40
+Available Margin: $4539452.34
+Margin-Based Leverage: 0.17
 
 Portfolio Greek Risk:
-  Option Delta: -0.097 ($-969.00)
+  Option Delta: -14.715 ($-147149.00)
   Hedge Delta: 0.000 ($0.00)
-  Total Delta: -0.097 ($-969.00)
-  Gamma: -0.008600 ($-86.00 per 1% move)
-  Theta: $11.08 per day
-  Vega: $-43.76 per 1% IV
+  Total Delta: -14.715 ($-147149.00)
+  Gamma: -1.295600 ($-12956.00 per 1% move)
+  Theta: $1664.19 per day
+  Vega: $-6573.67 per 1% IV
 
 Rolling Metrics:
-  Expanding Window (all obs, min 5 required): Sharpe: -0.27, Volatility: 0.30%
-  Short Window (21 days, rolling): Sharpe: -0.27, Volatility: 0.30%
-  Medium Window (63 days, rolling): Sharpe: -0.27, Volatility: 0.30%
-  Long Window (252 days, rolling): Sharpe: -0.27, Volatility: 0.30%
+  Expanding Window (all obs, min 5 required): Sharpe: 6.51, Volatility: 3651.03%
+  Short Window (21 days, rolling): Sharpe: 6.51, Volatility: 3651.03%
+  Medium Window (63 days, rolling): Sharpe: 6.51, Volatility: 3651.03%
+  Long Window (252 days, rolling): Sharpe: 6.51, Volatility: 3651.03%
 --------------------------------------------------
 
 Open Trades Table:
 ------------------------------------------------------------------------------------------------------------------------
 Symbol           Contracts   Entry  Current      Value  NLV% Underlying      Delta      Gamma      Theta       Vega     Margin   DTE
 ------------------------------------------------------------------------------------------------------------------------
-SPY240328C00518000          1 $ 0.50 $  0.41 $   41.00  0.0% $  476.35     0.044  0.004000 $   -5.18 $   20.44 $       0    77
-SPY240328C00516000          1 $ 0.56 $  0.50 $   50.00  0.0% $  476.35     0.052  0.004600 $   -5.90 $   23.32 $       0    77
+SPY240328C00518000         41 $ 0.50 $  0.41 $ 1681.00  0.0% $  476.35     0.044  0.004000 $   -5.18 $   20.44 $       0    77
+SPY                   9488 $474.89 $476.35 $451960880.00 8301.1% $  472.65     0.000  0.000000 $    0.00 $    0.00 $       0     0
+SPY240328C00516000        246 $ 0.56 $  0.50 $12300.00  0.2% $  476.35     0.052  0.004600 $   -5.90 $   23.32 $       0    77
 ------------------------------------------------------------------------------------------------------------------------
-TOTAL                                       $   91.00  0.1%                               $       0
+TOTAL                                       $451974861.00 8301.4%                               $       0
 ------------------------------------------------------------------------------------------------------------------------
 ============================================================
 

@@ -169,3 +169,12 @@ cython_debug/
 
 # PyPI configuration file
 .pypirc
+
+# Project-specific ignores
+/output/
+/reports/
+/temp_backup/
+*.txt
+!requirements.txt
+debug_output.txt
+.cursor/

@@ -3,23 +3,23 @@ POST-TRADE Summary [2024-01-02]:
 Daily P&L: $0.00 (0.00%)
   Option PnL: $0.00
   Hedge PnL: $0.00
-Open Trades: 1
-Total Position Exposure: 0.1% of NLV
+Open Trades: 2
+Total Position Exposure: 267.7% of NLV
 Net Liq: $100000.00
-  Cash Balance: $100050.00
-  Total Liability: $50.00
+  Cash Balance: $-163579.30
+  Total Liability: $2050.00
   Self Hedge (Hedge PnL): $0.00
-Total Margin Requirement: $50.00
-Available Margin: $99950.00
-Margin-Based Leverage: 0.00
+Total Margin Requirement: $53889.14
+Available Margin: $46110.86
+Margin-Based Leverage: 0.54
 
 Portfolio Greek Risk:
-  Option Delta: -0.047 ($-468.00)
+  Option Delta: -1.919 ($-19188.00)
   Hedge Delta: 0.000 ($0.00)
-  Total Delta: -0.047 ($-468.00)
-  Gamma: -0.003800 ($-38.00 per 1% move)
-  Theta: $5.29 per day
-  Vega: $-22.32 per 1% IV
+  Total Delta: -1.919 ($-19188.00)
+  Gamma: -0.155800 ($-1558.00 per 1% move)
+  Theta: $217.08 per day
+  Vega: $-915.21 per 1% IV
 
 Rolling Metrics:
   Expanding Window (all obs, min 5 required): Sharpe: 0.00, Volatility: 0.00%
@@ -32,8 +32,9 @@ Open Trades Table:
 ------------------------------------------------------------------------------------------------------------------------
 Symbol           Contracts   Entry  Current      Value  NLV% Underlying      Delta      Gamma      Theta       Vega     Margin   DTE
 ------------------------------------------------------------------------------------------------------------------------
-SPY240328C00518000          1 $ 0.50 $  0.50 $   50.00  0.1% $  472.65     0.047  0.003800 $   -5.29 $   22.32 $       0    86
+SPY240328C00518000         41 $ 0.50 $  0.50 $ 2050.00  2.1% $  472.65     0.047  0.003800 $   -5.29 $   22.32 $       0    86
+SPY                    562 $472.65 $472.65 $26562930.00 26562.9% $  472.65     0.000  0.000000 $    0.00 $    0.00 $       0     0
 ------------------------------------------------------------------------------------------------------------------------
-TOTAL                                       $   50.00  0.1%                               $       0
+TOTAL                                       $26564980.00 26565.0%                               $       0
 ------------------------------------------------------------------------------------------------------------------------
 ============================================================

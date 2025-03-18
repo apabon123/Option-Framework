@@ -115,51 +115,104 @@ class ThetaDecayStrategy(Strategy):
         
         return signals
     
-    def check_exit_conditions(self, position: Position, market_data: Dict[str, Any]) -> Tuple[bool, str]:
+    def check_exit_conditions(self, position, market_data):
         """
         Check if exit conditions are met for the given position.
         
         Args:
             position: Position to evaluate
             market_data: Dictionary of current market data
-        
+            
         Returns:
             Tuple of (should_exit, reason)
         """
-        # Calculate profit/loss
-        entry_price = position.avg_entry_price if hasattr(position, 'avg_entry_price') else None
-        current_price = position.current_price if hasattr(position, 'current_price') else None
+        # Get position details
+        symbol = position.symbol if hasattr(position, 'symbol') else 'Unknown'
         
-        if entry_price is None or current_price is None:
-            return False, "Missing price data"
+        # Get the entry and current prices for P&L calculation
+        entry_price = position.avg_entry_price if hasattr(position, 'avg_entry_price') else 0
+        current_price = position.current_price if hasattr(position, 'current_price') else 0
         
-        # For short positions, profit is when current < entry (price went down)
-        # For long positions, profit is when current > entry (price went up)
-        is_short = position.contracts < 0 if hasattr(position, 'contracts') else position.is_short
+        # Skip if we don't have valid prices
+        if entry_price <= 0 or current_price <= 0:
+            self.logger.warning(f"Invalid prices for {symbol}: entry_price={entry_price}, current_price={current_price}")
+            return False, "Invalid prices"
         
-        if is_short:
-            profit_pct = (entry_price - current_price) / entry_price
-            loss_threshold = self.stop_loss_threshold
+        # Use the is_short flag directly from the position
+        is_short = position.is_short if hasattr(position, 'is_short') else False
+        contracts = position.contracts if hasattr(position, 'contracts') else 0
+        
+        # Calculate raw P&L in dollars
+        if hasattr(position, 'contracts'):
+            qty = abs(contracts)
+            if is_short:
+                raw_pnl = (entry_price - current_price) * qty * 100  # Positive when price drops
+            else:
+                raw_pnl = (current_price - entry_price) * qty * 100  # Positive when price rises
         else:
+            raw_pnl = 0
+            
+        # Calculate profit percentage CORRECTLY for short vs long positions
+        if is_short:
+            # SHORT position logic: Make money when price goes DOWN
+            # Profit % is positive when price decreases, negative when price increases
+            profit_pct = (entry_price - current_price) / entry_price
+        else:
+            # LONG position logic: Make money when price goes UP
+            # Profit % is positive when price increases, negative when price decreases
             profit_pct = (current_price - entry_price) / entry_price
-            loss_threshold = -self.stop_loss_threshold / 2  # Less aggressive for long positions
+            
+        # Debug full details for the specific position
+        if hasattr(position, 'symbol') and position.symbol == 'SPY240328C00520000':
+            self.logger.info(f"==================== DETAILED POSITION DEBUG ====================")
+            self.logger.info(f"Position: {symbol}, contracts: {contracts}, is_short: {is_short}")
+            self.logger.info(f"Entry: ${entry_price}, Current: ${current_price}")
+            self.logger.info(f"Raw P&L: ${raw_pnl}")
+            self.logger.info(f"Profit %: {profit_pct:.4f} ({profit_pct:.2%})")
+            self.logger.info(f"Profit target: {self.profit_target:.4f} ({self.profit_target:.2%})")
+            self.logger.info(f"Stop loss: {-self.stop_loss_threshold:.4f} ({-self.stop_loss_threshold:.2%})")
+            
+            if is_short and current_price > entry_price:
+                self.logger.warning(f"SHORT POSITION LOSING MONEY - price increased from ${entry_price} to ${current_price}")
+            elif is_short and current_price < entry_price:
+                self.logger.info(f"SHORT POSITION MAKING MONEY - price decreased from ${entry_price} to ${current_price}")
+            
+            self.logger.info(f"================================================================")
         
-        # Exit conditions
+        # Get days to expiry if it exists
         days_to_expiry = position.days_to_expiry if hasattr(position, 'days_to_expiry') else None
         
-        # Take profit condition
-        if profit_pct >= self.profit_target:
-            return True, f"Profit target reached: {profit_pct:.2%}"
-        
-        # Stop loss condition
-        if profit_pct <= loss_threshold:
-            return True, f"Stop loss triggered: {profit_pct:.2%}"
-        
-        # Close when approaching expiration
+        # --------------------------------------------------------------------
+        # Condition 1: Check approach to expiry - close regardless of PNL
+        # --------------------------------------------------------------------
         if days_to_expiry is not None and days_to_expiry <= self.close_days_to_expiry:
-            return True, f"Approaching expiration: {days_to_expiry} days left"
+            self.logger.info(f"[ThetaStrategy] Closing {symbol} due to approaching expiry: {days_to_expiry} days remaining (threshold: {self.close_days_to_expiry})")
+            return True, f"Approaching expiry: {days_to_expiry} days remaining (threshold: {self.close_days_to_expiry})"
         
-        # Hold position
+        # --------------------------------------------------------------------
+        # Condition 2: Check for profit target reached
+        # --------------------------------------------------------------------
+        # For a profit target to be hit:
+        # - For SHORT positions: price decreased, profit_pct is positive, profit_pct >= profit_target
+        # - For LONG positions: price increased, profit_pct is positive, profit_pct >= profit_target
+        if profit_pct >= self.profit_target:
+            profit_message = f"Profit target reached for {symbol}: {profit_pct:.2%} vs target {self.profit_target:.2%}, Entry: ${entry_price}, Current: ${current_price}, P&L: ${raw_pnl}"
+            self.logger.info(f"[ThetaStrategy] {profit_message}")
+            return True, profit_message
+        
+        # --------------------------------------------------------------------
+        # Condition 3: Check for stop loss triggered
+        # --------------------------------------------------------------------
+        # For a stop loss to be hit:
+        # - For SHORT positions: price increased, profit_pct is negative, profit_pct <= -stop_loss_threshold
+        # - For LONG positions: price decreased, profit_pct is negative, profit_pct <= -stop_loss_threshold
+        if profit_pct <= -self.stop_loss_threshold:
+            # This is a significant LOSS situation
+            stop_loss_message = f"Stop loss triggered for {symbol}: {profit_pct:.2%} vs threshold {-self.stop_loss_threshold:.2%}, Entry: ${entry_price}, Current: ${current_price}, P&L: ${raw_pnl}"
+            self.logger.info(f"[ThetaStrategy] {stop_loss_message}")
+            return True, stop_loss_message
+            
+        # Keep holding the position if no exit conditions met
         return False, "Holding position"
     
     def update_metrics(self, portfolio_metrics: Dict[str, Any]) -> None:

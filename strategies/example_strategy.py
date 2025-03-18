@@ -122,11 +122,15 @@ class SimpleOptionStrategy(Strategy):
         # Make sure we have days_to_expiry attribute
         if not hasattr(position, 'days_to_expiry'):
             return False, None
+            
+        # Get symbol for more detailed reasons
+        symbol = position.symbol if hasattr(position, 'symbol') else "Unknown"
 
         # Time-based exit - close by DTE
         if position.days_to_expiry <= self.close_dte:
-            self.logger.debug(f"[Strategy] Exit signal: DTE {position.days_to_expiry} ≤ {self.close_dte}")
-            return True, f"Close by DTE {self.close_dte}"
+            detailed_reason = f"Close due to DTE for {symbol}: {position.days_to_expiry} days remaining vs threshold {self.close_dte} days"
+            self.logger.info(f"[SimpleStrategy] {detailed_reason}")
+            return True, detailed_reason
 
         # Safety check for entry and current prices
         if not hasattr(position, 'avg_entry_price') or not hasattr(position, 'current_price'):
@@ -147,13 +151,15 @@ class SimpleOptionStrategy(Strategy):
         try:
             # Profit target exit
             if profit_pct >= self.profit_target:
-                self.logger.debug(f"[Strategy] Exit signal: Profit {profit_pct:.2%} ≥ Target {self.profit_target:.2%}")
-                return True, 'Profit Target'
+                detailed_reason = f"Profit target reached for {symbol}: {profit_pct:.2%} vs target {self.profit_target:.2%}, Entry: ${position.avg_entry_price:.2f}, Current: ${position.current_price:.2f}"
+                self.logger.info(f"[SimpleStrategy] {detailed_reason}")
+                return True, detailed_reason
 
             # Stop loss exit - for short options, this is when loss exceeds stop_loss times premium
             if profit_pct <= -self.stop_loss:
-                self.logger.debug(f"[Strategy] Exit signal: Loss {profit_pct:.2%} ≤ Stop Loss -{self.stop_loss:.2%}")
-                return True, 'Stop Loss'
+                detailed_reason = f"Stop loss triggered for {symbol}: {profit_pct:.2%} vs threshold -{self.stop_loss:.2%}, Entry: ${position.avg_entry_price:.2f}, Current: ${position.current_price:.2f}"
+                self.logger.info(f"[SimpleStrategy] {detailed_reason}")
+                return True, detailed_reason
         except Exception as e:
             # Log the error but don't exit the position due to calculation errors
             if hasattr(self, 'logger'):

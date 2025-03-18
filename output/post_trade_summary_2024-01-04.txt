@@ -1,25 +1,25 @@
 ============================================================
 POST-TRADE Summary [2024-01-04]:
-Daily P&L: $6.00 (0.01%)
-  Option PnL: $0.00
+Daily P&L: $563826.92 (563.83%)
+  Option PnL: $280511.05
   Hedge PnL: $0.00
-Open Trades: 1
-Total Position Exposure: 0.0% of NLV
-Net Liq: $100021.50
-  Cash Balance: $100050.00
-  Total Liability: $28.50
+Open Trades: 2
+Total Position Exposure: 102.2% of NLV
+Net Liq: $662383.67
+  Cash Balance: $-12221.47
+  Total Liability: $1168.50
   Self Hedge (Hedge PnL): $0.00
-Total Margin Requirement: $28.50
-Available Margin: $99993.00
-Margin-Based Leverage: 0.00
+Total Margin Requirement: $135926.44
+Available Margin: $526457.23
+Margin-Based Leverage: 0.21
 
 Portfolio Greek Risk:
-  Option Delta: -0.030 ($-302.00)
+  Option Delta: -1.238 ($-12382.00)
   Hedge Delta: 0.000 ($0.00)
-  Total Delta: -0.030 ($-302.00)
-  Gamma: -0.002700 ($-27.00 per 1% move)
-  Theta: $3.78 per day
-  Vega: $-15.28 per 1% IV
+  Total Delta: -1.238 ($-12382.00)
+  Gamma: -0.110700 ($-1107.00 per 1% move)
+  Theta: $154.88 per day
+  Vega: $-626.64 per 1% IV
 
 Rolling Metrics:
   Expanding Window (all obs, min 5 required): Sharpe: 0.00, Volatility: 0.00%
@@ -32,12 +32,12 @@ Open Trades Table:
 ------------------------------------------------------------------------------------------------------------------------
 Symbol           Contracts   Entry  Current      Value  NLV% Underlying      Delta      Gamma      Theta       Vega     Margin   DTE
 ------------------------------------------------------------------------------------------------------------------------
-SPY240328C00518000          1 $ 0.50 $  0.29 $   28.50  0.0% $  467.34     0.030  0.002700 $   -3.78 $   15.28 $       0    84
+SPY240328C00518000         41 $ 0.50 $  0.29 $ 1168.50  0.2% $  467.34     0.030  0.002700 $   -3.78 $   15.28 $       0    84
+SPY                   1446 $470.01 $467.34 $67577364.00 10202.1% $  472.65     0.000  0.000000 $    0.00 $    0.00 $       0     0
 ------------------------------------------------------------------------------------------------------------------------
-TOTAL                                       $   28.50  0.0%                               $       0
+TOTAL                                       $67578532.50 10202.3%                               $       0
 ------------------------------------------------------------------------------------------------------------------------
 ============================================================
 
 [TradeManager] Logs:
-[TradeManager] Completed processing for 2024-01-04
 [TradeManager] Completed processing for 2024-01-04

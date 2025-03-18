@@ -513,6 +513,68 @@ class DataManager:
             
         return sorted(self.data['UnderlyingSymbol'].unique())
     
+    def get_market_data_by_symbol(self, daily_data: pd.DataFrame) -> Dict[str, Dict[str, Any]]:
+        """
+        Convert daily data DataFrame to a dictionary organized by symbol.
+        
+        Args:
+            daily_data: DataFrame containing data for the current trading day
+            
+        Returns:
+            dict: Dictionary with symbols as keys and market data as values
+        """
+        if daily_data is None or daily_data.empty:
+            self.logger.warning("No daily data provided to get_market_data_by_symbol")
+            return {}
+            
+        market_data_by_symbol = {}
+        
+        # Determine which column to use for symbol
+        symbol_column = None
+        for col in ['Symbol', 'OptionSymbol', 'UnderlyingSymbol']:
+            if col in daily_data.columns:
+                symbol_column = col
+                self.logger.debug(f"Using {col} as symbol column in get_market_data_by_symbol")
+                break
+                
+        if symbol_column is None:
+            self.logger.warning("No symbol column found in daily_data, columns available: " + str(daily_data.columns.tolist()))
+            return {}
+        
+        for _, row in daily_data.iterrows():
+            symbol = row[symbol_column]
+            
+            # Skip if no symbol
+            if not symbol or pd.isna(symbol):
+                continue
+                
+            # Create a dictionary of market data for this symbol
+            market_data = {}
+            
+            # Add all columns from the row to the market data
+            for col in daily_data.columns:
+                market_data[col] = row[col]
+                
+            # Ensure essential fields exist
+            if 'MidPrice' not in market_data:
+                # If we have bid and ask, calculate mid price
+                if 'Bid' in market_data and 'Ask' in market_data:
+                    bid = market_data.get('Bid', 0)
+                    ask = market_data.get('Ask', 0)
+                    if bid > 0 and ask > 0:
+                        market_data['MidPrice'] = (bid + ask) / 2
+                    else:
+                        # Use last price if bid or ask is not available
+                        market_data['MidPrice'] = market_data.get('Last', 0)
+                else:
+                    # Use last price if bid and ask are not available
+                    market_data['MidPrice'] = market_data.get('Last', 0)
+            
+            # Store in the dictionary, using the symbol from the chosen column
+            market_data_by_symbol[symbol] = market_data
+            
+        return market_data_by_symbol
+    
     def generate_trading_dates(
         self, 
         start_date: Optional[datetime] = None, 
