@@ -227,6 +227,16 @@ class OptionMarginCalculator(MarginCalculator):
         else:
             adjusted_margin = initial_margin
 
+        # Calculate option premium (price * contracts * contract multiplier)
+        option_premium = position.current_price * position.contracts * 100
+
+        # For short options, ensure margin is never less than the option premium
+        if position.is_short and adjusted_margin < option_premium:
+            if self.logger:
+                self.logger.warning(f"  WARNING: Calculated margin (${adjusted_margin:.2f}) is less than option premium (${option_premium:.2f})")
+                self.logger.info(f"  Setting margin to option premium: ${option_premium:.2f}")
+            adjusted_margin = option_premium
+
         # Log the calculation steps
         if self.logger:
             self.logger.debug(f"  Initial margin calculation: {position.current_price:.4f} × {position.contracts} × 100 / {self.max_leverage:.2f} = ${initial_margin:.2f}")
@@ -390,9 +400,11 @@ class SPANMarginCalculator(MarginCalculator):
         # The total scan risk is the absolute value of the sum of delta and gamma effects
         scan_risk = abs(delta_effect + gamma_effect_with_vol)
         
-        # Sanity check: if scan risk is suspiciously low compared to premium, apply a correction
+        # Calculate option premium for comparison
         option_premium = position.current_price * position.contracts * contract_multiplier
-        if scan_risk < option_premium * 0.1:  # If scan risk is less than 10% of premium
+        
+        # Sanity check: if scan risk is suspiciously low compared to premium, apply a correction
+        if scan_risk < option_premium * 0.25:  # If scan risk is less than 25% of premium
             if self.logger:
                 self.logger.warning(f"[Scan Risk] WARNING: Calculated scan risk (${scan_risk:.2f}) is suspiciously low compared to premium (${option_premium:.2f})")
                 self.logger.warning(f"[Scan Risk] Applying minimum scan risk of 25% of premium: ${option_premium * 0.25:.2f}")
@@ -461,10 +473,11 @@ class SPANMarginCalculator(MarginCalculator):
             self.logger.info(f"  Initial margin percentage: {self.initial_margin_percentage:.2%}")
         
         # Calculate notional value (underlying price * contracts * 100 shares per contract)
-        notional_value = position.underlying_price * position.contracts * 100
+        contract_multiplier = 100  # Standard for equity options
+        notional_value = position.underlying_price * position.contracts * contract_multiplier
         
         if self.logger:
-            self.logger.info(f"  Notional calculation: {position.underlying_price:.2f} × {position.contracts} × 100 = ${notional_value:.2f}")
+            self.logger.info(f"  Notional calculation: {position.underlying_price:.2f} × {position.contracts} × {contract_multiplier} = ${notional_value:.2f}")
 
         # Calculate initial margin based on notional
         base_margin = notional_value * self.initial_margin_percentage
@@ -485,7 +498,10 @@ class SPANMarginCalculator(MarginCalculator):
             self.logger.info(f"  Initial margin (max of base_margin and scan_risk): ${margin:.2f}")
         
         # Calculate option premium with contract multiplier properly applied
-        option_premium = position.current_price * position.contracts * 100  # Include contract multiplier
+        option_premium = position.current_price * position.contracts * contract_multiplier
+        
+        if self.logger:
+            self.logger.info(f"  Option premium calculation: {position.current_price:.4f} × {position.contracts} × {contract_multiplier} = ${option_premium:.2f}")
         
         # Ensure margin is never less than option premium for short options
         if position.is_short:
@@ -493,9 +509,11 @@ class SPANMarginCalculator(MarginCalculator):
             margin = max(margin, option_premium)
             
             if self.logger:
-                self.logger.info(f"  Short option premium: ${option_premium:.2f}")
                 if margin > old_margin:
-                    self.logger.info(f"  Premium is higher than calculated margin, using premium: ${margin:.2f}")
+                    self.logger.warning(f"  Short option premium (${option_premium:.2f}) is higher than calculated margin (${old_margin:.2f})")
+                    self.logger.warning(f"  Setting margin to option premium: ${margin:.2f}")
+                else:
+                    self.logger.info(f"  Short option premium: ${option_premium:.2f} (margin is already higher)")
 
         # Check if computed margin is suspiciously low compared to premium
         if margin < option_premium * 0.5 and option_premium > 0:
@@ -503,9 +521,9 @@ class SPANMarginCalculator(MarginCalculator):
                 self.logger.warning(f"  WARNING: Calculated margin (${margin:.2f}) is much lower than premium (${option_premium:.2f})")
                 self.logger.warning(f"  This may indicate a missing contract multiplier (100x) in the calculation")
             # Apply the contract multiplier to the margin if it appears to be missing
-            # This is a safer approach than just warning since the issue is clearly identified
-            corrected_margin = margin * 100
-            self.logger.warning(f"  Automatically correcting: ${margin:.2f} → ${corrected_margin:.2f}")
+            corrected_margin = margin * contract_multiplier
+            if self.logger:
+                self.logger.warning(f"  Automatically correcting: ${margin:.2f} → ${corrected_margin:.2f}")
             margin = corrected_margin
         
         if self.logger:
