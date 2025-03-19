@@ -690,6 +690,9 @@ class SPANMarginCalculator(MarginCalculator):
             # Track positions in this group
             group_positions = {}
             
+            # Store position deltas with direction information
+            position_deltas = {}
+            
             for symbol in position_symbols:
                 position = positions[symbol]
                 standalone_margin += margin_by_position[symbol]
@@ -704,36 +707,40 @@ class SPANMarginCalculator(MarginCalculator):
                         position_delta = -position.current_delta * position.contracts * 100
                     else:
                         position_delta = position.current_delta * position.contracts * 100
-                    net_delta += position_delta
+                    position_deltas[symbol] = position_delta
                 elif not hasattr(position, 'option_type') or not position.option_type:
                     # For stock/ETF positions, delta is just number of shares
                     position_delta = -position.contracts if position.is_short else position.contracts
-                    net_delta += position_delta
+                    position_deltas[symbol] = position_delta
+                
+                net_delta += position_delta
+            
+            # Check if all positions are in the same direction (all positive or all negative deltas)
+            all_same_direction = True
+            sign_of_first = None
+            
+            for delta in position_deltas.values():
+                if sign_of_first is None:
+                    sign_of_first = 1 if delta > 0 else -1
+                elif (delta > 0 and sign_of_first < 0) or (delta < 0 and sign_of_first > 0):
+                    all_same_direction = False
+                    break
             
             # Enhanced hedging benefit logic
-            # Apply hedging benefit whenever there are multiple positions in a group
-            if len(position_symbols) > 1:
+            # Only apply hedging benefit if positions are offsetting each other (not all same direction)
+            if len(position_symbols) > 1 and not all_same_direction:
                 # Calculate total absolute delta for the group
-                total_abs_delta = sum(
-                    abs(positions[s].current_delta * positions[s].contracts * 100) 
-                    if hasattr(positions[s], 'current_delta') 
-                    else abs(positions[s].contracts) 
-                    for s in position_symbols
-                )
+                total_abs_delta = sum(abs(delta) for delta in position_deltas.values())
                 
                 # Calculate offset factor - how well positions offset each other
-                # When net_delta is close to 0, positions are well-hedged
+                # When net_delta is close to 0, positions are well-hedged (offset_factor close to 1.0)
                 if total_abs_delta > 0:
                     offset_factor = 1.0 - abs(net_delta) / total_abs_delta
                 else:
                     offset_factor = 0.0
                     
-                # Ensure a minimum offset for diversified positions
-                # This provides some benefit even for imperfect hedges
-                offset_factor = max(0.2, offset_factor)
-                
-                # Cap the offset factor to avoid excessive reductions
-                offset_factor = min(0.8, offset_factor)
+                # Ensure offset factor stays within bounds (0.2 to 0.8)
+                offset_factor = min(0.8, max(0.2, offset_factor))
                 
                 # Apply the hedge credit using our offset factor
                 reduced_margin = standalone_margin * (1 - self.hedge_credit_rate * offset_factor)
@@ -743,8 +750,10 @@ class SPANMarginCalculator(MarginCalculator):
                 hedging_benefits += benefit
                 
                 if self.logger:
+                    delta_direction = "offsetting" if not all_same_direction else "same direction"
                     self.logger.debug(f"[Margin] Hedging benefit for {underlying} group: ${benefit:.2f}")
                     self.logger.debug(f"  Net delta: {net_delta:.2f}, Total absolute delta: {total_abs_delta:.2f}")
+                    self.logger.debug(f"  Positions are {delta_direction}")
                     self.logger.debug(f"  Offset factor: {offset_factor:.2f}")
                     self.logger.debug(f"  Standalone margin: ${standalone_margin:.2f}")
                     self.logger.debug(f"  Reduced margin: ${reduced_margin:.2f}")
@@ -756,9 +765,14 @@ class SPANMarginCalculator(MarginCalculator):
                     proportion = original / standalone_margin if standalone_margin > 0 else 0
                     margin_with_offsets[symbol] = reduced_margin * proportion
             else:
-                # No hedging benefit for single positions
+                # No hedging benefit for single positions or positions all in same direction
                 for symbol in position_symbols:
                     margin_with_offsets[symbol] = margin_by_position[symbol]
+                
+                if len(position_symbols) > 1 and all_same_direction and self.logger:
+                    self.logger.debug(f"[Margin] No hedging benefit for {underlying} group - all positions in same direction")
+                    self.logger.debug(f"  Net delta: {net_delta:.2f}")
+                    self.logger.debug(f"  Standalone margin: ${standalone_margin:.2f}")
         
         # Step 4: Calculate total margin with all offsets
         total_margin = sum(margin_with_offsets.values())
