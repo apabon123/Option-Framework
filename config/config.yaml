@@ -10,14 +10,14 @@ paths:
 # Date range for backtesting
 dates:
   start_date: "2024-01-01"
-  end_date: "2024-01-31"
+  end_date: "2024-01-10"
 
 # Portfolio settings
 portfolio:
   initial_capital: 100000
   max_leverage: 12
   max_nlv_percent: 1.0
-  max_position_size_pct: 0.25  # 25% per position
+  max_position_size_pct: 0.05  # Reduced from 0.25 to 0.05 (5% per position)
   max_portfolio_delta: 0.50    # 50% of portfolio value as max delta exposure
 
 # Hedging configuration (moved from strategy section)
@@ -63,8 +63,8 @@ trading:
 # Margin management parameters
 margin_management:
   # New margin threshold settings
-  high_margin_threshold: 0.90   # Rebalance at 90% margin usage
-  target_margin_threshold: 0.80 # Target 80% margin usage after rebalancing
+  high_margin_threshold: 0.98   # Increased from 0.90 to 0.98 (98% margin usage)
+  target_margin_threshold: 0.95 # Increased from 0.80 to 0.95 (95% margin usage)
   
   # Margin calculation method
   margin_calculation_method: "portfolio"  # Options: "simple" or "portfolio"

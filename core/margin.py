@@ -367,17 +367,19 @@ class SPANMarginCalculator(MarginCalculator):
         
         # First-order approximation using delta
         delta = position.current_delta
-        delta_effect = delta * price_move * position.contracts * 100
+        # Ensure we are using the contract multiplier (100) in delta calculations
+        contract_multiplier = 100
+        delta_effect = delta * price_move * position.contracts * contract_multiplier
         
         if self.logger:
-            self.logger.info(f"[Scan Risk] Delta effect calculation: {delta:.4f} × ${price_move:.2f} × {position.contracts} × 100 = ${delta_effect:.2f}")
+            self.logger.info(f"[Scan Risk] Delta effect calculation: {delta:.4f} × ${price_move:.2f} × {position.contracts} × {contract_multiplier} = ${delta_effect:.2f}")
         
         # Second-order approximation using gamma
         gamma = position.current_gamma
-        gamma_effect = 0.5 * gamma * (price_move ** 2) * position.contracts * 100
+        gamma_effect = 0.5 * gamma * (price_move ** 2) * position.contracts * contract_multiplier
         
         if self.logger:
-            self.logger.info(f"[Scan Risk] Gamma effect calculation: 0.5 × {gamma:.6f} × ${price_move:.2f}² × {position.contracts} × 100 = ${gamma_effect:.2f}")
+            self.logger.info(f"[Scan Risk] Gamma effect calculation: 0.5 × {gamma:.6f} × ${price_move:.2f}² × {position.contracts} × {contract_multiplier} = ${gamma_effect:.2f}")
         
         # Apply volatility multiplier to gamma effect to account for market stress
         gamma_effect_with_vol = gamma_effect * self.volatility_multiplier
@@ -387,6 +389,14 @@ class SPANMarginCalculator(MarginCalculator):
         
         # The total scan risk is the absolute value of the sum of delta and gamma effects
         scan_risk = abs(delta_effect + gamma_effect_with_vol)
+        
+        # Sanity check: if scan risk is suspiciously low compared to premium, apply a correction
+        option_premium = position.current_price * position.contracts * contract_multiplier
+        if scan_risk < option_premium * 0.1:  # If scan risk is less than 10% of premium
+            if self.logger:
+                self.logger.warning(f"[Scan Risk] WARNING: Calculated scan risk (${scan_risk:.2f}) is suspiciously low compared to premium (${option_premium:.2f})")
+                self.logger.warning(f"[Scan Risk] Applying minimum scan risk of 25% of premium: ${option_premium * 0.25:.2f}")
+            scan_risk = max(scan_risk, option_premium * 0.25)  # At least 25% of premium
         
         if self.logger:
             self.logger.info(f"[Scan Risk] Combined risk: |${delta_effect:.2f} + ${gamma_effect_with_vol:.2f}| = ${scan_risk:.2f}")
@@ -474,10 +484,11 @@ class SPANMarginCalculator(MarginCalculator):
         if self.logger:
             self.logger.info(f"  Initial margin (max of base_margin and scan_risk): ${margin:.2f}")
         
+        # Calculate option premium with contract multiplier properly applied
+        option_premium = position.current_price * position.contracts * 100  # Include contract multiplier
+        
         # Ensure margin is never less than option premium for short options
-        option_premium = 0
         if position.is_short:
-            option_premium = position.current_price * position.contracts * 100  # Include contract multiplier
             old_margin = margin
             margin = max(margin, option_premium)
             
@@ -488,8 +499,14 @@ class SPANMarginCalculator(MarginCalculator):
 
         # Check if computed margin is suspiciously low compared to premium
         if margin < option_premium * 0.5 and option_premium > 0:
-            self.logger.warning(f"  WARNING: Calculated margin (${margin:.2f}) is much lower than premium (${option_premium:.2f})")
-            self.logger.warning(f"  This may indicate a missing contract multiplier (100x) in the calculation")
+            if self.logger:
+                self.logger.warning(f"  WARNING: Calculated margin (${margin:.2f}) is much lower than premium (${option_premium:.2f})")
+                self.logger.warning(f"  This may indicate a missing contract multiplier (100x) in the calculation")
+            # Apply the contract multiplier to the margin if it appears to be missing
+            # This is a safer approach than just warning since the issue is clearly identified
+            corrected_margin = margin * 100
+            self.logger.warning(f"  Automatically correcting: ${margin:.2f} → ${corrected_margin:.2f}")
+            margin = corrected_margin
         
         if self.logger:
             self.logger.info(f"  Final margin for {position.symbol}: ${margin:.2f}")

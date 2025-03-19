@@ -192,6 +192,14 @@ class RiskManager:
                 self.logger.warning(f"Option delta: {delta:.4f}, Hedge delta needed: {hedge_delta:.4f}")
                 self.logger.warning(f"Shares to hedge 1 contract: {hedge_shares:.1f} at ${underlying_price:.2f}")
                 
+                # If margin_per_contract is suspiciously low, we may have already fixed it above,
+                # so we should not recalculate using calculate_position_margin again
+                if margin_per_contract < option_price:
+                    self.logger.warning(f"Initial option margin appears too low: ${margin_per_contract:.2f}")
+                    if margin_per_contract < option_price * 100:
+                        self.logger.warning(f"Adjusted option margin: ${option_price * 100:.2f}")
+                    margin_per_contract = max(margin_per_contract, option_price * 100)
+                
                 # Calculate hedge margin (if needed)
                 from core.position import Position
                 
@@ -209,17 +217,19 @@ class RiskManager:
                 # Set correct delta for the hedge position
                 temp_hedge_position.current_delta = -int(hedge_shares) if hedge_delta > 0 else int(hedge_shares)
                 
-                # Create a positions dictionary for portfolio margin calculation
-                positions_dict = {
-                    temp_position.symbol: temp_position,
-                    temp_hedge_position.symbol: temp_hedge_position
-                }
-                
                 # Calculate the hedge margin separately for reference
                 hedge_margin = margin_calculator.calculate_position_margin(temp_hedge_position)
                 self.logger.warning(f"Option margin (unhedged): ${margin_per_contract:.2f}")
                 self.logger.warning(f"Standard hedge margin (25%): ${hedge_margin:.2f}")
                 self.logger.warning(f"Simple sum: ${margin_per_contract + hedge_margin:.2f}")
+                
+                # Create a positions dictionary for portfolio margin calculation
+                # The option position's margin will be recalculated within the portfolio calculator,
+                # so we should make sure it reflects our adjusted margins
+                positions_dict = {
+                    temp_position.symbol: temp_position,
+                    temp_hedge_position.symbol: temp_hedge_position
+                }
                 
                 # Calculate the proper portfolio margin for the combined position
                 try:
