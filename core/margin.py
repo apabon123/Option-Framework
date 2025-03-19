@@ -212,7 +212,7 @@ class OptionMarginCalculator(MarginCalculator):
             self.logger.debug(f"  Contract multiplier: 100")
         
         # Basic margin calculation with contract multiplier
-        initial_margin = position.current_price * position.contracts * 100 / self.max_leverage
+        initial_margin = position.current_price * position.contracts * 100 * self.max_leverage
 
         # Apply OTM discount
         is_otm = not position.is_itm()
@@ -239,7 +239,7 @@ class OptionMarginCalculator(MarginCalculator):
 
         # Log the calculation steps
         if self.logger:
-            self.logger.debug(f"  Initial margin calculation: {position.current_price:.4f} × {position.contracts} × 100 / {self.max_leverage:.2f} = ${initial_margin:.2f}")
+            self.logger.debug(f"  Initial margin calculation: {position.current_price:.4f} × {position.contracts} × 100 × {self.max_leverage:.2f} = ${initial_margin:.2f}")
             if position.is_short and position.unrealized_pnl < 0:
                 self.logger.debug(f"  Unrealized PnL adjustment: ${-position.unrealized_pnl:.2f}")
             self.logger.debug(f"  Final margin: ${adjusted_margin:.2f}")
