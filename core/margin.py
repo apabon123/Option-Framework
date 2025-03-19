@@ -343,10 +343,10 @@ class SPANMarginCalculator(MarginCalculator):
         if not isinstance(position, OptionPosition):
             # For stocks/ETFs, use a fixed percentage of position value
             position_value = position.current_price * position.contracts
-            scan_risk = position_value * 0.15  # 15% market risk
+            scan_risk = position_value * 0.05  # 5% market risk (changed from 15% for consistency)
             
             if self.logger:
-                self.logger.info(f"[Scan Risk] Stock/ETF position, simplified calculation: ${position_value:.2f} × 0.15 = ${scan_risk:.2f}")
+                self.logger.info(f"[Scan Risk] Stock/ETF position, simplified calculation: ${position_value:.2f} × 0.05 = ${scan_risk:.2f}")
             
             return scan_risk
         
@@ -366,9 +366,9 @@ class SPANMarginCalculator(MarginCalculator):
                 
             return scan_risk
         
-        # Calculate scan risk based on a simulated price move of 15% of the underlying price
-        # This is a simplified approach compared to the full SPAN calculation
-        price_move_pct = 0.15
+        # Calculate scan risk based on a simulated price move of 5% of the underlying price
+        # This is a more reasonable 1-day price move compared to the previous 15%
+        price_move_pct = 0.05  # Changed from 0.15 to 0.05 (5% is more aligned with industry standards)
         underlying_price = position.underlying_price if hasattr(position, 'underlying_price') and position.underlying_price > 0 else 100.0
         price_move = underlying_price * price_move_pct
         
@@ -386,10 +386,12 @@ class SPANMarginCalculator(MarginCalculator):
         
         # Second-order approximation using gamma
         gamma = position.current_gamma
-        gamma_effect = 0.5 * gamma * (price_move ** 2) * position.contracts * contract_multiplier
+        # Apply a gamma scaling factor to prevent gamma from dominating the calculation
+        gamma_scaling_factor = 0.3  # Scale gamma impact to align with industry standards
+        gamma_effect = 0.5 * gamma * (price_move ** 2) * position.contracts * contract_multiplier * gamma_scaling_factor
         
         if self.logger:
-            self.logger.info(f"[Scan Risk] Gamma effect calculation: 0.5 × {gamma:.6f} × ${price_move:.2f}² × {position.contracts} × {contract_multiplier} = ${gamma_effect:.2f}")
+            self.logger.info(f"[Scan Risk] Gamma effect calculation: 0.5 × {gamma:.6f} × ${price_move:.2f}² × {position.contracts} × {contract_multiplier} × {gamma_scaling_factor} = ${gamma_effect:.2f}")
         
         # Apply volatility multiplier to gamma effect to account for market stress
         gamma_effect_with_vol = gamma_effect * self.volatility_multiplier
@@ -656,17 +658,33 @@ class SPANMarginCalculator(MarginCalculator):
                     position_delta = -position.contracts if position.is_short else position.contracts
                     net_delta += position_delta
             
-            # Apply hedging benefit if we have offsetting positions
-            if len(position_symbols) > 1 and abs(net_delta) < 0.5 * sum(abs(positions[s].current_delta * positions[s].contracts * 100) 
-                                                                    if hasattr(positions[s], 'current_delta') 
-                                                                    else abs(positions[s].contracts) 
-                                                                    for s in position_symbols):
-                # Positions are significantly hedged, apply margin reduction
-                reduced_margin = standalone_margin * (1 - self.hedge_credit_rate * (1 - abs(net_delta) / sum(
+            # Enhanced hedging benefit logic
+            # Apply hedging benefit whenever there are multiple positions in a group
+            if len(position_symbols) > 1:
+                # Calculate total absolute delta for the group
+                total_abs_delta = sum(
                     abs(positions[s].current_delta * positions[s].contracts * 100) 
                     if hasattr(positions[s], 'current_delta') 
                     else abs(positions[s].contracts) 
-                    for s in position_symbols)))
+                    for s in position_symbols
+                )
+                
+                # Calculate offset factor - how well positions offset each other
+                # When net_delta is close to 0, positions are well-hedged
+                if total_abs_delta > 0:
+                    offset_factor = 1.0 - abs(net_delta) / total_abs_delta
+                else:
+                    offset_factor = 0.0
+                    
+                # Ensure a minimum offset for diversified positions
+                # This provides some benefit even for imperfect hedges
+                offset_factor = max(0.2, offset_factor)
+                
+                # Cap the offset factor to avoid excessive reductions
+                offset_factor = min(0.8, offset_factor)
+                
+                # Apply the hedge credit using our offset factor
+                reduced_margin = standalone_margin * (1 - self.hedge_credit_rate * offset_factor)
                 
                 # Track the hedging benefit
                 benefit = standalone_margin - reduced_margin
@@ -674,7 +692,8 @@ class SPANMarginCalculator(MarginCalculator):
                 
                 if self.logger:
                     self.logger.debug(f"[Margin] Hedging benefit for {underlying} group: ${benefit:.2f}")
-                    self.logger.debug(f"  Net delta: {net_delta:.2f}")
+                    self.logger.debug(f"  Net delta: {net_delta:.2f}, Total absolute delta: {total_abs_delta:.2f}")
+                    self.logger.debug(f"  Offset factor: {offset_factor:.2f}")
                     self.logger.debug(f"  Standalone margin: ${standalone_margin:.2f}")
                     self.logger.debug(f"  Reduced margin: ${reduced_margin:.2f}")
                 
@@ -685,7 +704,7 @@ class SPANMarginCalculator(MarginCalculator):
                     proportion = original / standalone_margin if standalone_margin > 0 else 0
                     margin_with_offsets[symbol] = reduced_margin * proportion
             else:
-                # No significant hedging, use standalone margins
+                # No hedging benefit for single positions
                 for symbol in position_symbols:
                     margin_with_offsets[symbol] = margin_by_position[symbol]
         
