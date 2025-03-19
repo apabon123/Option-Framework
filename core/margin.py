@@ -474,18 +474,59 @@ class SPANMarginCalculator(MarginCalculator):
             self.logger.info(f"  Underlying price: ${position.underlying_price:.2f}")
             self.logger.info(f"  Initial margin percentage: {self.initial_margin_percentage:.2%}")
         
-        # Calculate notional value (underlying price * contracts * 100 shares per contract)
+        # Calculate option premium with contract multiplier properly applied
         contract_multiplier = 100  # Standard for equity options
+        option_premium = position.current_price * position.contracts * contract_multiplier
+        
+        if self.logger:
+            self.logger.info(f"  Option premium calculation: {position.current_price:.4f} × {position.contracts} × {contract_multiplier} = ${option_premium:.2f}")
+        
+        # Calculate notional value (underlying price * contracts * 100 shares per contract)
         notional_value = position.underlying_price * position.contracts * contract_multiplier
         
         if self.logger:
             self.logger.info(f"  Notional calculation: {position.underlying_price:.2f} × {position.contracts} × {contract_multiplier} = ${notional_value:.2f}")
 
-        # Calculate initial margin based on notional
-        base_margin = notional_value * self.initial_margin_percentage
+        # ENHANCEMENT: Scale the margin percentage based on moneyness and delta
+        # For far OTM options, we'll use a reduced margin percentage
+        adjusted_margin_percentage = self.initial_margin_percentage
+        
+        # Check if we have delta information - use it to scale the margin
+        if hasattr(position, 'current_delta') and hasattr(position, 'strike'):
+            # Get the absolute value of delta (0 to 1)
+            abs_delta = abs(position.current_delta)
+            
+            # Calculate moneyness: how far ITM or OTM the option is
+            if position.option_type.upper() in ['C', 'CALL']:
+                moneyness = (position.underlying_price / position.strike) - 1
+            elif position.option_type.upper() in ['P', 'PUT']:
+                moneyness = 1 - (position.underlying_price / position.strike)
+            else:
+                # Default to 0 if option type is unknown
+                moneyness = 0
+                
+            # Log moneyness info
+            if self.logger:
+                self.logger.info(f"  Option moneyness: {moneyness:.2%}")
+                self.logger.info(f"  Absolute delta: {abs_delta:.4f}")
+            
+            # Scale the margin percentage based on moneyness and delta
+            # Far OTM options (negative moneyness) get reduced margin
+            if moneyness < -0.05:  # More than 5% OTM
+                # The deeper OTM and smaller delta, the lower the margin percentage
+                # For very deep OTM options, this could be as low as 10% of the original
+                scaling_factor = min(1.0, max(0.1, abs_delta * 5))  # 0.1 to 1.0 scaling
+                adjusted_margin_percentage *= scaling_factor
+                
+                if self.logger:
+                    self.logger.info(f"  Far OTM option detected. Scaling margin by factor: {scaling_factor:.2f}")
+                    self.logger.info(f"  Adjusted margin percentage: {adjusted_margin_percentage:.2%}")
+        
+        # Calculate initial margin based on adjusted notional
+        base_margin = notional_value * adjusted_margin_percentage
         
         if self.logger:
-            self.logger.info(f"  Base margin calculation: ${notional_value:.2f} × {self.initial_margin_percentage:.4f} = ${base_margin:.2f}")
+            self.logger.info(f"  Base margin calculation: ${notional_value:.2f} × {adjusted_margin_percentage:.4f} = ${base_margin:.2f}")
 
         # Calculate scan risk (risk of market move)
         scan_risk = self._calculate_scan_risk(position)
@@ -499,12 +540,6 @@ class SPANMarginCalculator(MarginCalculator):
         if self.logger:
             self.logger.info(f"  Initial margin (max of base_margin and scan_risk): ${margin:.2f}")
         
-        # Calculate option premium with contract multiplier properly applied
-        option_premium = position.current_price * position.contracts * contract_multiplier
-        
-        if self.logger:
-            self.logger.info(f"  Option premium calculation: {position.current_price:.4f} × {position.contracts} × {contract_multiplier} = ${option_premium:.2f}")
-        
         # Ensure margin is never less than option premium for short options
         if position.is_short:
             old_margin = margin
@@ -516,6 +551,21 @@ class SPANMarginCalculator(MarginCalculator):
                     self.logger.warning(f"  Setting margin to option premium: ${margin:.2f}")
                 else:
                     self.logger.info(f"  Short option premium: ${option_premium:.2f} (margin is already higher)")
+
+        # ENHANCEMENT: Apply a cap on the margin-to-premium ratio
+        # Industry practice typically has a maximum ratio, especially for OTM options
+        if option_premium > 0:
+            margin_to_premium_ratio = margin / option_premium
+            max_acceptable_ratio = 20.0  # Cap at 20x the premium
+            
+            if margin_to_premium_ratio > max_acceptable_ratio:
+                capped_margin = option_premium * max_acceptable_ratio
+                
+                if self.logger:
+                    self.logger.warning(f"  Margin-to-premium ratio too high: {margin_to_premium_ratio:.2f}x")
+                    self.logger.warning(f"  Capping margin at {max_acceptable_ratio:.1f}x premium: ${capped_margin:.2f}")
+                
+                margin = capped_margin
 
         # Check if computed margin is suspiciously low compared to premium
         if margin < option_premium * 0.5 and option_premium > 0:
@@ -529,6 +579,8 @@ class SPANMarginCalculator(MarginCalculator):
             margin = corrected_margin
         
         if self.logger:
+            if option_premium > 0:
+                self.logger.info(f"  Final margin-to-premium ratio: {margin/option_premium:.2f}x")
             self.logger.info(f"  Final margin for {position.symbol}: ${margin:.2f}")
             self.logger.info(f"  ===== End of Margin Calculation =====")
 
