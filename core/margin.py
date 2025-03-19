@@ -786,15 +786,16 @@ class SPANMarginCalculator(MarginCalculator):
             self.logger.warning(f"[MARGIN TEST]   ${notional_value:.2f} × {self.initial_margin_percentage:.4f} = ${base_margin:.2f}")
         
         # Step 3: Calculate scan risk
-        # Simulate a price move of 15% of the underlying price
-        price_move_pct = 0.15
+        # Use 5% price move to match _calculate_scan_risk (changed from 15%)
+        price_move_pct = 0.05
         price_move = underlying_price * price_move_pct
         
         # First-order approximation using delta
         delta_effect = test_position.current_delta * price_move * contracts * 100
         
-        # Second-order approximation using gamma
-        gamma_effect = 0.5 * test_position.current_gamma * (price_move ** 2) * contracts * 100
+        # Second-order approximation using gamma with scaling factor
+        gamma_scaling_factor = 0.3  # Match the scaling factor used in _calculate_scan_risk
+        gamma_effect = 0.5 * test_position.current_gamma * (price_move ** 2) * contracts * 100 * gamma_scaling_factor
         
         # Total risk is the sum of delta and gamma effects
         scan_risk = abs(delta_effect + gamma_effect * self.volatility_multiplier)
@@ -803,7 +804,7 @@ class SPANMarginCalculator(MarginCalculator):
             self.logger.warning(f"[MARGIN TEST] Step 3: Calculate scan risk")
             self.logger.warning(f"[MARGIN TEST]   Price move: {price_move_pct:.0%} of ${underlying_price:.2f} = ${price_move:.2f}")
             self.logger.warning(f"[MARGIN TEST]   Delta effect: {test_position.current_delta:.4f} × ${price_move:.2f} × {contracts} × 100 = ${delta_effect:.2f}")
-            self.logger.warning(f"[MARGIN TEST]   Gamma effect: 0.5 × {test_position.current_gamma:.6f} × ${price_move:.2f}² × {contracts} × 100 = ${gamma_effect:.2f}")
+            self.logger.warning(f"[MARGIN TEST]   Gamma effect: 0.5 × {test_position.current_gamma:.6f} × ${price_move:.2f}² × {contracts} × 100 × {gamma_scaling_factor} = ${gamma_effect:.2f}")
             self.logger.warning(f"[MARGIN TEST]   Total scan risk: |${delta_effect:.2f} + ${gamma_effect * self.volatility_multiplier:.2f}| = ${scan_risk:.2f}")
         
         # Step 4: Choose the higher of base margin and scan risk
