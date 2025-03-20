@@ -13,7 +13,7 @@ from pathlib import Path
 # Get the absolute path of this script
 script_path = Path(__file__).resolve()
 # Get the project root directory
-project_root = script_path.parent
+project_root = script_path.parent.parent.parent
 
 # Add the project root to the Python path
 sys.path.insert(0, str(project_root))
@@ -23,7 +23,7 @@ output_dir = os.path.join(project_root, 'output')
 os.makedirs(output_dir, exist_ok=True)
 
 # Import and run the tests
-from tests.margin_calculator_test import run_margin_tests
+from tests.margin_tests.margin_calculator_test import run_margin_tests
 
 if __name__ == "__main__":
     print("Running Margin Calculator Tests...")

@@ -8,6 +8,8 @@ This framework provides a complete environment for developing, testing, and eval
 
 ## Recent Changes
 
+- **Enhanced SPAN Margin Calculator**: Greatly improved the SPAN margin calculation system with configurable parameters, vega risk incorporation, proper delta hedging benefits, and partial hedge handling
+- **Configuration-Driven Architecture**: Added YAML configuration for all margin parameters, allowing easy adjustment to match different broker requirements
 - **Greek Sign Convention Fixes**: Implemented proper handling of signs for delta, gamma, theta, and vega for both short and long positions in calculation and display contexts
 - **Position Storage Improvements**: Centralized position storage in the Position Inventory as a single source of truth
 - **Hedging Logic Refinement**: Fixed boundary adjustments in the hedging algorithm to prevent over-hedging
@@ -30,6 +32,13 @@ The framework is built with a modular design:
   - Aggregates portfolio-level Greeks and risk metrics
   - Provides consistent access to position data for all components
 
+- **Margin Calculator System (`margin.py`)**:
+  - Implements multiple margin calculation methods including SPAN methodology
+  - Features configurable parameters for matching different broker requirements
+  - Accurately calculates portfolio margin with proper hedging benefits
+  - Supports both perfect and partial delta hedging scenarios
+  - Incorporates comprehensive risk factors (delta, gamma, vega) in scan risk calculations
+
 - **Hedging System (`hedging.py`)**:
   - Implements dynamic delta hedging strategies
   - Supports ratio-based and constant-delta approaches
@@ -45,6 +54,7 @@ The framework is built with a modular design:
 
 - **Accurate Greek Calculations**: Proper handling of Greek signs for both display and calculation purposes
 - **Sophisticated Hedging**: Dynamic delta hedging with configurable tolerance bands
+- **SPAN Margin Calculations**: Advanced portfolio margin calculations with proper hedging benefits
 - **Position Management**: Complete position lifecycle tracking with P&L calculation
 - **Risk Management**: Comprehensive risk metrics and exposure monitoring
 - **Performance Reporting**: Detailed reports on strategy performance
@@ -89,6 +99,62 @@ The framework implements a sophisticated approach to handling option positions a
 
 #### Display Mode (`for_display=True`):
 Additional sign adjustments for clearer reporting of risk exposure in UI and logs.
+
+## SPAN Margin Calculation
+
+The framework implements a sophisticated SPAN (Standard Portfolio Analysis of Risk) margin calculator with the following features:
+
+### Key Components
+
+- **Scan Risk Calculation**: Combines delta, gamma, and vega risk factors to estimate potential losses under various market scenarios
+- **Portfolio Margin**: Calculates margin requirements across a portfolio with proper hedging offsets
+- **Configuration Driven**: All parameters are configurable through YAML configuration files
+
+### Configurable Parameters
+
+```yaml
+margin:
+  span:
+    # Maximum leverage allowed (higher means less margin required)
+    max_leverage: 12.0
+    
+    # Initial margin as percentage of notional value
+    initial_margin_percentage: 0.1
+    
+    # Maintenance margin as percentage of notional value
+    maintenance_margin_percentage: 0.07
+    
+    # Credit rate applied to hedged positions (0.0 to 1.0)
+    hedge_credit_rate: 0.8
+    
+    # Price move percentage for risk scenarios
+    price_move_pct: 0.05
+    
+    # Volatility shift for risk scenarios
+    vol_shift_pct: 0.3
+    
+    # Scaling factor applied to gamma effects
+    gamma_scaling_factor: 0.3
+    
+    # Minimum scan risk as percentage of option premium
+    min_scan_risk_percentage: 0.25
+    
+    # Maximum ratio of margin to option premium
+    max_margin_to_premium_ratio: 20.0
+    
+    # Whether to scale margin lower for out-of-the-money options
+    otm_scaling_enabled: true
+    
+    # Minimum scaling for far out-of-the-money options
+    otm_minimum_scaling: 0.1
+```
+
+### Hedging Benefits
+
+The margin calculator properly accounts for delta hedging in the portfolio:
+- Perfect hedges receive the full hedge credit rate reduction (e.g., 80% margin reduction)
+- Partial hedges receive proportional benefits based on hedge quality
+- The system properly handles hedging across different position types (options and stocks)
 
 ## Hedging Strategy
 

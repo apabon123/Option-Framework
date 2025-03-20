@@ -1000,8 +1000,9 @@ class OptionPosition(Position):
             self.current_vega = getattr(option_data, 'Vega', 0)
                 
         # Adjust delta sign for short positions
+        # For short positions, we need to flip the sign: positive becomes negative, negative becomes positive
         if is_short and self.current_delta != 0:
-            self.current_delta = -abs(self.current_delta)
+            self.current_delta = -self.current_delta  # Flip the sign for short positions
         
         # Option-specific reference data (for specialized calculations)
         self.option_chain_id = None  # An identifier to link to the option chain
