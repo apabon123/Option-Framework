@@ -189,6 +189,11 @@ class RiskManager:
                 logger=self.logger
             )
             
+            # Ensure underlying price is properly set - it might be missing from the position after creation
+            if temp_position.underlying_price == 0 and underlying_price > 0:
+                self.logger.warning(f"[Margin Trace] Fixing missing underlying price: ${underlying_price:.2f}")
+                temp_position.underlying_price = underlying_price
+            
             # Set greeks if available
             if 'Delta' in option_data:
                 temp_position.current_delta = option_data.get('Delta', 0)
@@ -245,6 +250,10 @@ class RiskManager:
                 position_type='stock',  # Explicitly set to stock
                 logger=self.logger
             )
+            
+            # Ensure underlying_price is also set for the stock position (technically not needed but for consistency)
+            if hasattr(temp_hedge_position, 'underlying_price'):
+                temp_hedge_position.underlying_price = underlying_price
             
             # Set correct delta for the hedge position - this should be set based on is_short
             # For stock positions: delta = shares (positive if long, negative if short)

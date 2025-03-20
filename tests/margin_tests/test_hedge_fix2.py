@@ -53,6 +53,16 @@ def test_hedge_direction_delegation():
         is_short=False  # LONG call
     )
     
+    # Ensure option properties are correctly set
+    underlying_price = call_option_data["underlying_price"]
+    call_position.underlying_price = underlying_price
+    call_position.current_delta = call_option_data["Delta"]
+    call_position.current_gamma = call_option_data["Gamma"]
+    call_position.current_theta = call_option_data["Theta"]
+    call_position.current_vega = call_option_data["Vega"]
+    call_position.option_type = "C"
+    call_position.strike = call_option_data["Strike"]
+    
     # Get the option delta
     option_delta = call_position.current_delta
     print(f"Option (Long Call) Delta: {option_delta:.4f}")
@@ -76,6 +86,10 @@ def test_hedge_direction_delegation():
         current_price=underlying_price,
         is_short=hedge_is_short  # Should be True for a short stock position
     )
+    
+    # Ensure position properties are set for the hedge position
+    if hasattr(hedge_position, 'underlying_price'):
+        hedge_position.underlying_price = underlying_price
     
     # Calculate stock position delta (negative if short)
     stock_delta = -hedge_position.contracts if hedge_position.is_short else hedge_position.contracts
@@ -109,6 +123,11 @@ def test_hedge_direction_delegation():
         option_symbol: call_position,
         "SPY": hedge_position
     }
+    
+    # Verify underlying prices are set correctly
+    print("\nVerifying underlying prices:")
+    print(f"Option position underlying price: ${call_position.underlying_price:.2f}")
+    print(f"Stock position underlying price: ${hedge_position.underlying_price if hasattr(hedge_position, 'underlying_price') else 'N/A'}")
     
     # First test with the specialized SPAN calculator
     span_portfolio_result = span_calculator.calculate_portfolio_margin(positions)

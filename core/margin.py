@@ -580,6 +580,15 @@ class SPANMarginCalculator(MarginCalculator):
         # Calculate notional value (underlying price * contracts * 100 shares per contract)
         notional_value = position.underlying_price * position.contracts * contract_multiplier
         
+        # Add a safety check for zero underlying price
+        if position.underlying_price <= 0 and self.logger:
+            self.logger.warning(f"[Margin] WARNING: Zero or negative underlying price detected for {position.symbol}")
+            # Try to estimate a reasonable underlying price from option data
+            if hasattr(position, 'strike') and position.strike > 0:
+                estimated_price = position.strike
+                self.logger.warning(f"[Margin] Using strike price as estimate: ${estimated_price:.2f}")
+                notional_value = estimated_price * position.contracts * contract_multiplier
+        
         if self.logger:
             self.logger.info(f"  Notional calculation: {position.underlying_price:.2f} × {position.contracts} × {contract_multiplier} = ${notional_value:.2f}")
 
