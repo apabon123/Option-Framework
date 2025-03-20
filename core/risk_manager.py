@@ -290,17 +290,43 @@ class RiskManager:
                 reasonable_min = simple_combined * 0.65  # Allow up to 35% offset
                 reasonable_max = simple_combined * 1.1   # Allow up to 10% increase
                 
-                if span_margin >= reasonable_min and span_margin <= reasonable_max:
-                    # Use the proper SPAN margin
-                    self.logger.warning(f"Using SPAN portfolio margin: ${span_margin:.2f} ("+
-                                    f"{(1 - span_margin/simple_combined):.1%} offset from simple sum)")
-                    combined_margin_per_contract = span_margin
+                # Check if positions are actually hedging (opposite delta signs)
+                offsetting_positions = (temp_position.current_delta * temp_hedge_position.current_delta < 0)
+                
+                # Calculate minimum reasonable margin (premium plus buffer)
+                min_premium_margin = option_price * 100 * 1.1  # Premium + 10% buffer
+                
+                # Calculate maximum reasonable margin (sum with moderate offset)
+                max_reasonable_margin = simple_combined * 0.8  # Allow up to 20% offset
+                
+                # For non-short options, premium floor doesn't apply
+                if not temp_position.is_short:
+                    min_premium_margin = 0
+                
+                # First verify if positions are actually hedging each other
+                if not offsetting_positions:
+                    # Positions are adding risk, no reduction should apply
+                    self.logger.warning(f"Positions have same-direction deltas, not applying hedge benefit")
+                    combined_margin_per_contract = simple_combined
                 else:
-                    # SPAN result is outside reasonable range, use alternative calculation
-                    # Apply a fixed 15% offset to account for hedging benefit - this is more conservative
-                    combined_margin_per_contract = (margin_per_contract + hedge_margin) * 0.85
-                    self.logger.warning(f"SPAN margin ${span_margin:.2f} outside reasonable range ({reasonable_min:.2f} - {reasonable_max:.2f})")
-                    self.logger.warning(f"Using alternative calculation: ${combined_margin_per_contract:.2f} (15% offset)")
+                    # Positions are hedging, apply normal SPAN calculation with proper checks
+                    # Minimum margin should be the greater of: premium buffer or max position margin * 0.5
+                    position_min = max(margin_per_contract, hedge_margin) * 0.5
+                    final_min = max(min_premium_margin, position_min)
+                    
+                    if span_margin < final_min:
+                        # Result seems too aggressive, use more conservative estimate
+                        self.logger.warning(f"SPAN margin ${span_margin:.2f} below minimum threshold ${final_min:.2f}")
+                        combined_margin_per_contract = final_min
+                    elif span_margin > max_reasonable_margin and span_margin > simple_combined:
+                        # Result is higher than simple sum which is unusual for hedged positions
+                        self.logger.warning(f"SPAN margin ${span_margin:.2f} above maximum threshold ${max_reasonable_margin:.2f}")
+                        combined_margin_per_contract = simple_combined
+                    else:
+                        # SPAN result is reasonable, use it
+                        self.logger.warning(f"Using SPAN portfolio margin: ${span_margin:.2f} ("+
+                                        f"{(1 - span_margin/simple_combined):.1%} offset from simple sum)")
+                        combined_margin_per_contract = span_margin
             except Exception as e:
                 # If SPAN calculation fails, fall back to conservative approach
                 self.logger.warning(f"Error calculating SPAN margin: {str(e)}")
