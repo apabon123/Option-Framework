@@ -1,187 +1,318 @@
-# Configuration for options trading strategy
+################################################################################
+#                     OPTIONS TRADING FRAMEWORK CONFIGURATION                      #
+################################################################################
 
-# File paths
+################################################################################
+# PATHS CONFIGURATION
+# Define all file and directory paths used by the system
+################################################################################
 paths:
+  # Input data file containing option chains
   input_file: "C:\\Users\\alexp\\OneDrive\\Gdrive\\Trading\\Data Outputs\\SPY_Combined.csv"
-  output_dir: "C:\\Users\\alexp\\OneDrive\\Gdrive\\Trading\\Data Outputs\\scenario_results"
-  trades_output_file: "trades.csv"
-  verification_output_dir: "C:\\Users\\alexp\\OneDrive\\Gdrive\\Trading\\Data Outputs\\verification_files"
-
-# Date range for backtesting
-dates:
-  start_date: "2024-01-01"
-  end_date: "2024-01-10"
-
-# Portfolio settings
-portfolio:
-  initial_capital: 100000
-  max_leverage: 12
-  max_nlv_percent: 1.0
-  max_position_size_pct: 0.05  # Reduced from 0.25 to 0.05 (5% per position)
-  max_portfolio_delta: 0.50    # 50% of portfolio value as max delta exposure
-
-# Hedging configuration (moved from strategy section)
-hedging:
-  enabled: true
-  mode: "ratio"
-  hedge_with_underlying: true  # Use underlying price from option data for hedging
-  target_delta_ratio: 0.05     # Reduced from 0.1 to 0.05 (5% of NLV)
-  delta_tolerance: 0.1        # Reduced from 0.3 to 0.1 (10% of NLV)
-  hedge_symbol: "SPY"
-  max_hedge_ratio: 1.5  # Reduced from 3.0 to 1.5
-
-# Risk management settings
-risk:
-  rolling_window: 21
-  target_z: 0
-  min_z: -2.0
-  min_investment: 0.25
-  short_window: 21
-  medium_window: 63
-  long_window: 252  # Changed to 252 trading days (1 year)
-  # Which window to use for risk scaling (short, medium, long)
-  risk_scaling_window: "short"
-
-# Strategy parameters
-strategy:
-  name: "ThetaDecayStrategy"
-  # Option selection parameters
-  days_to_expiry_min: 60
-  days_to_expiry_max: 90
-  is_short: true
-  delta_target: -0.2
-  delta_tolerance: 0.01  # Added tolerance parameter
-  profit_target: 0.65
-  stop_loss_threshold: 2.5
-  close_days_to_expiry: 14
-  min_position_size: 1
-
-# Trading parameters
-trading:
-  normal_spread: 0.60
-
-# Margin management parameters
-margin_management:
-  # New margin threshold settings
-  high_margin_threshold: 0.98   # Increased from 0.90 to 0.98 (98% margin usage)
-  target_margin_threshold: 0.95 # Increased from 0.80 to 0.95 (95% margin usage)
   
-  # Margin calculation method
-  margin_calculation_method: "portfolio"  # Options: "simple" or "portfolio"
-  use_portfolio_calculator: true  # Whether to use the portfolio's margin calculator
-  
-  # Buffer and cooldown settings
-  margin_buffer_pct: 0.10
-  rebalance_cooldown_days: 3
-  
-  # Position reduction parameters
-  max_position_reduction_pct: 0.25      # Standard max reduction per position (25%)
-  losing_position_max_reduction_pct: 0.40 # Higher reduction for losing positions (40%)
-  urgent_reduction_pct: 0.50            # Up to 50% in urgent situations
-
-# Reporting parameters
-reporting:
-  # Enable business logic verification file output
-  generate_verification_files: true
-  # Enable detailed logging for verification files
-  detailed_verification_logging: true
-  # Format settings for verification files
-  verification_file_format:
-    include_trade_manager_logs: true
-    include_risk_scaling_logs: true
-    include_portfolio_logs: true
-
-# Option Framework Configuration
-# This file contains configuration parameters for the entire system
-
-# Paths configuration
-paths:
   # Directory for storing output logs and results
-  output_dir: "C:/Users/alexp/OneDrive/Gdrive/Trading/Data Outputs/scenario_results"
+  output_dir: "C:\\Users\\alexp\\OneDrive\\Gdrive\\Trading\\Data Outputs\\scenario_results"
+  
+  # Default filename for saved trade data
+  trades_output_file: "trades.csv"
+  
+  # Directory for storing verification files for debugging and validation
+  verification_output_dir: "C:\\Users\\alexp\\OneDrive\\Gdrive\\Trading\\Data Outputs\\verification_files"
+  
   # Base directory for loading data
   data_dir: "data"
-  # Directory for storing cached data
+  
+  # Directory for storing cached data to improve performance
   cache_dir: "data/cache"
 
-# SPAN Margin Calculator Configuration
-# These parameters control how margin requirements are calculated using the SPAN methodology
+################################################################################
+# BACKTEST CONFIGURATION
+# Date range and other parameters for historical backtesting
+################################################################################
+dates:
+  # Start date for the backtest period (YYYY-MM-DD)
+  start_date: "2024-01-01"
+  
+  # End date for the backtest period (YYYY-MM-DD)
+  end_date: "2024-01-10"
+
+################################################################################
+# PORTFOLIO CONFIGURATION
+# Parameters controlling overall portfolio behavior and constraints
+################################################################################
+portfolio:
+  # Starting capital amount in USD
+  initial_capital: 100000
+  
+  # Maximum leverage allowed for the portfolio
+  # Higher values allow more positions with the same capital
+  max_leverage: 12
+  
+  # Maximum percentage of Net Liquidation Value to deploy
+  # 1.0 = 100% of capital can be deployed
+  max_nlv_percent: 1.0
+  
+  # Maximum size for any single position as percentage of portfolio
+  # 0.05 = No position can exceed 5% of portfolio value
+  max_position_size_pct: 0.05
+  
+  # Maximum delta exposure as percentage of portfolio value
+  # 0.50 = Total delta cannot exceed 50% of portfolio value
+  max_portfolio_delta: 0.50
+
+################################################################################
+# HEDGING CONFIGURATION
+# Parameters for managing portfolio delta through hedging
+################################################################################
+hedging:
+  # Whether to apply delta hedging to the portfolio
+  enabled: true
+  
+  # Hedging mode: "ratio" (based on portfolio delta/NLV ratio) or "absolute" (fixed amount)
+  mode: "ratio"
+  
+  # Whether to use the underlying price from option data for hedging calculations
+  hedge_with_underlying: true
+  
+  # Target delta ratio as percentage of NLV (Net Liquidation Value)
+  # 0.05 = Target delta exposure of 5% of portfolio value
+  target_delta_ratio: 0.05
+  
+  # Acceptable deviation from target delta before hedge adjustment
+  # 0.1 = Allow delta to drift 10% before rebalancing
+  delta_tolerance: 0.1
+  
+  # Symbol to use for hedging (typically the underlying index/ETF)
+  hedge_symbol: "SPY"
+  
+  # Maximum hedge ratio allowed (limits extreme hedging positions)
+  # 1.5 = Hedge position cannot exceed 1.5x the portfolio delta exposure
+  max_hedge_ratio: 1.5
+
+################################################################################
+# RISK MANAGEMENT CONFIGURATION
+# Parameters for managing and scaling risk based on market conditions
+################################################################################
+risk:
+  # Number of days in the rolling window for risk calculations
+  rolling_window: 21
+  
+  # Target Z-score for position sizing (0 = neutral market assumption)
+  target_z: 0
+  
+  # Minimum Z-score threshold (-2.0 = reduce position size in high volatility)
+  min_z: -2.0
+  
+  # Minimum investment ratio regardless of risk scaling
+  # 0.25 = Always deploy at least 25% of normal position size
+  min_investment: 0.25
+  
+  # Short-term window for market analysis (days)
+  short_window: 21
+  
+  # Medium-term window for market analysis (days)
+  medium_window: 63
+  
+  # Long-term window for market analysis (days)
+  # 252 = Approximately one year of trading days
+  long_window: 252
+  
+  # Window to use for risk scaling calculations
+  # Options: "short", "medium", "long"
+  risk_scaling_window: "short"
+
+################################################################################
+# STRATEGY CONFIGURATION
+# Parameters specific to the option selling strategy
+################################################################################
+strategy:
+  # Name of the strategy to run
+  name: "ThetaDecayStrategy"
+  
+  # Minimum days to expiration for new positions
+  days_to_expiry_min: 60
+  
+  # Maximum days to expiration for new positions
+  days_to_expiry_max: 90
+  
+  # Whether to sell options (true) or buy options (false)
+  is_short: true
+  
+  # Target delta value for option selection
+  # -0.2 = Sell options with approximately 20 delta
+  delta_target: -0.2
+  
+  # Acceptable deviation from target delta when selecting options
+  delta_tolerance: 0.01
+  
+  # Profit target as percentage of max profit (0.65 = exit at 65% of max profit)
+  profit_target: 0.65
+  
+  # Multiple of credit received before triggering stop loss
+  # 2.5 = Close position if loss reaches 2.5x the credit received
+  stop_loss_threshold: 2.5
+  
+  # Days to expiration threshold for closing positions
+  # 14 = Close positions when they reach 14 days to expiry
+  close_days_to_expiry: 14
+  
+  # Minimum size for new positions (in contracts)
+  min_position_size: 1
+
+################################################################################
+# TRADING PARAMETERS
+# Parameters for execution and order handling
+################################################################################
+trading:
+  # Assumed bid-ask spread for normal market conditions (0.60 = 60% of mid price)
+  normal_spread: 0.60
+
+################################################################################
+# MARGIN MANAGEMENT CONFIGURATION
+# Parameters for managing margin requirements and utilization
+################################################################################
+margin_management:
+  # Threshold for high margin utilization warning
+  # 0.98 = Alert when margin usage reaches 98% of available margin
+  high_margin_threshold: 0.98
+  
+  # Target margin utilization threshold
+  # 0.95 = Aim to keep margin usage at or below 95% of available margin
+  target_margin_threshold: 0.95
+  
+  # Type of margin calculator to use
+  # Options: "span" (SPAN methodology), "simple" (leverage-based), "option" (option-specialized)
+  margin_calculator_type: "span"
+  
+  # Method for calculating margin requirements
+  # Options: "simple" (per-position) or "portfolio" (portfolio-level)
+  margin_calculation_method: "portfolio"
+  
+  # Whether to use the portfolio's margin calculator for calculations
+  use_portfolio_calculator: true
+  
+  # Buffer percentage to maintain below target margin
+  # 0.10 = Keep 10% buffer below target threshold
+  margin_buffer_pct: 0.10
+  
+  # Minimum days between portfolio rebalancing operations
+  rebalance_cooldown_days: 3
+  
+  # Maximum percentage to reduce a standard position when managing margin
+  # 0.25 = Reduce position by up to 25% in normal conditions
+  max_position_reduction_pct: 0.25
+  
+  # Maximum percentage to reduce a losing position when managing margin
+  # 0.40 = Reduce losing positions by up to 40%
+  losing_position_max_reduction_pct: 0.40
+  
+  # Maximum percentage to reduce positions in urgent margin situations
+  # 0.50 = Reduce positions by up to 50% in urgent margin calls
+  urgent_reduction_pct: 0.50
+
+################################################################################
+# SPAN MARGIN CALCULATOR CONFIGURATION
+# Parameters for the SPAN methodology margin calculation
+################################################################################
 margin:
   span:
-    # Maximum leverage allowed (higher means less margin required)
-    # Default: 1.0 (no leverage)
+    # Maximum leverage allowed for margin calculations
+    # 12.0 = Up to 12x leverage on margin requirements
     max_leverage: 12.0
     
     # Initial margin as percentage of notional value
-    # Example: 0.1 means 10% of underlying value
-    # Range: 0.01 (1%) to 0.2 (20%) is typical
+    # 0.1 = 10% of underlying value required as initial margin
     initial_margin_percentage: 0.1
     
-    # Maintenance margin as percentage of notional value (lower than initial margin)
-    # Example: 0.07 means 7% of underlying value
-    # This is the margin you must maintain to avoid a margin call
+    # Maintenance margin as percentage of notional value
+    # 0.07 = 7% of underlying value required to maintain position
     maintenance_margin_percentage: 0.07
     
     # Credit rate applied to hedged positions (0.0 to 1.0)
-    # Example: 0.8 means 80% reduction in margin for perfectly hedged positions
-    # Higher values result in greater margin reductions for hedged positions
+    # 0.8 = 80% reduction in margin for perfectly hedged positions
     hedge_credit_rate: 0.8
     
     # Price move percentage for risk scenarios
-    # Example: 0.05 means simulate a 5% price move in the underlying
-    # Typical range: 0.03 (3%) to 0.15 (15%) depending on asset volatility
+    # 0.05 = Simulate a 5% price move in the underlying
     price_move_pct: 0.05
     
     # Volatility shift for risk scenarios (absolute change)
-    # Example: 0.3 means simulate a 30% shift in implied volatility
-    # Higher values result in more conservative margin requirements
+    # 0.3 = Simulate a 30% shift in implied volatility
     vol_shift_pct: 0.3
     
     # Volatility multiplier for stress scenarios
-    # Example: 1.0 means no additional stress, 1.5 means 50% more risk
-    # Higher values result in more conservative margin requirements
+    # 1.0 = No additional stress, higher values increase margin requirements
     volatility_multiplier: 1.0
     
-    # Scaling factor applied to gamma effects to prevent overweighting
-    # Example: 0.3 means gamma effects are scaled to 30% of their raw value
-    # Typical range: 0.1 to 0.5
+    # Scaling factor applied to gamma effects
+    # 0.3 = Gamma effects are scaled to 30% of their raw value
     gamma_scaling_factor: 0.3
     
     # Minimum scan risk as percentage of option premium
-    # Example: 0.25 means scan risk must be at least 25% of premium
-    # Acts as a safety floor for very low calculated risk values
+    # 0.25 = Scan risk must be at least 25% of premium
     min_scan_risk_percentage: 0.25
     
     # Maximum ratio of margin to option premium
-    # Example: 20.0 means margin cannot exceed 20x the premium
-    # Prevents excessively high margin requirements for cheap options
+    # 20.0 = Margin cannot exceed 20x the premium
     max_margin_to_premium_ratio: 20.0
     
     # Whether to scale margin lower for out-of-the-money options
-    # True: OTM options get reduced margin based on moneyness
-    # False: No scaling based on moneyness
+    # true = OTM options get reduced margin based on moneyness
     otm_scaling_enabled: true
     
     # Minimum scaling for far out-of-the-money options
-    # Example: 0.1 means even very far OTM options still require at least 10% of regular margin
-    # Range: 0.05 to 0.5 depending on risk tolerance
+    # 0.1 = Very far OTM options still require at least 10% of normal margin
     otm_minimum_scaling: 0.1
 
-# Data loading and processing configuration
+################################################################################
+# REPORTING CONFIGURATION
+# Parameters for logging, reporting, and verification outputs
+################################################################################
+reporting:
+  # Enable business logic verification file output
+  generate_verification_files: true
+  
+  # Enable detailed logging for verification files
+  detailed_verification_logging: true
+  
+  # Format settings for verification files
+  verification_file_format:
+    # Include detailed logs from the trade manager
+    include_trade_manager_logs: true
+    
+    # Include detailed logs from risk scaling calculations
+    include_risk_scaling_logs: true
+    
+    # Include detailed logs from portfolio operations
+    include_portfolio_logs: true
+
+################################################################################
+# DATA PROCESSING CONFIGURATION
+# Parameters for data loading and processing operations
+################################################################################
 data:
-  # Default chunk size for batch processing
+  # Default chunk size for batch processing operations
   chunk_size: 1000
-  # Use cached data when available
+  
+  # Whether to use cached data when available
   use_cache: true
-  # Cache expiration in days
+  
+  # Cache expiration period in days
   cache_expiry_days: 7
 
-# Logging configuration
+################################################################################
+# LOGGING CONFIGURATION
+# Parameters controlling system logging behavior
+################################################################################
 logging:
   # Log level (DEBUG, INFO, WARNING, ERROR, CRITICAL)
   level: "INFO"
+  
   # Format for log messages
   format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-  # Log to console
+  
+  # Whether to output logs to console
   console: true
-  # Log to file
+  
+  # Whether to write logs to file
   file: true

@@ -14,6 +14,13 @@ This framework provides a complete environment for developing, testing, and eval
 - **Position Storage Improvements**: Centralized position storage in the Position Inventory as a single source of truth
 - **Hedging Logic Refinement**: Fixed boundary adjustments in the hedging algorithm to prevent over-hedging
 - **Display Formatting**: Improved display of Greeks in trading reports and logs for better readability
+- **Enhanced SPAN margin calculator with realistic hedging benefits**
+- **Improved greeks sign handling throughout the codebase**
+- **Added option to configure which margin calculator to use (SPAN, Simple, or Option-specific)**
+- **Configuration-driven architecture with comprehensive YAML configuration**
+- **Implemented portfolio margin calculation with proper delta hedging**
+- **Added advanced volatility bootstrapping for option pricer**
+- **Better handling for short options and long stock positions**
 
 ## Architecture
 
@@ -102,7 +109,17 @@ Additional sign adjustments for clearer reporting of risk exposure in UI and log
 
 ## SPAN Margin Calculation
 
-The framework implements a sophisticated SPAN (Standard Portfolio Analysis of Risk) margin calculator with the following features:
+The framework includes a sophisticated SPAN margin calculator that:
+- Properly accounts for delta hedging benefits
+- Applies industry-standard scan risk calculations
+- Includes volatility shifts in margin calculations
+- Scales margins based on option moneyness
+- Adjusts margins based on regulatory minimums
+
+The margin calculator type is configurable through the YAML configuration file, allowing you to choose between:
+- `span`: Advanced SPAN-style portfolio margining with delta hedging benefits (default)
+- `option`: Option-specific margin calculations without portfolio-level benefits
+- `simple`: Basic margin calculations based on maximum leverage
 
 ### Key Components
 
@@ -179,12 +196,31 @@ python main.py --config custom_config.yaml
 python main.py --report
 ```
 
-### Configuration
+## Configuration
 
-Main configuration is handled through `config/config.yaml`:
+The framework is fully configurable through the `config/config.yaml` file. Key configuration sections include:
 
+### Margin Management Configuration
 ```yaml
-# Portfolio settings
+margin_management:
+  # High and target margin usage thresholds (as percentage of available margin)
+  high_margin_threshold: 0.98
+  target_margin_threshold: 0.95
+  
+  # Type of margin calculator to use (span, option, simple)
+  margin_calculator_type: "span"
+  
+  # Method for margin calculation (portfolio, simple)
+  margin_calculation_method: "portfolio"
+  
+  # Maximum leverage allowed for portfolio
+  max_leverage: 12.0
+  
+  #... other margin settings
+```
+
+### Portfolio Settings
+```yaml
 portfolio:
   initial_capital: 100000
   max_leverage: 12

@@ -209,10 +209,10 @@ class HedgingManager:
             
             # Determine direction based on deviation sign
             if delta_deviation > 0:
-                # Need to reduce delta - sell shares
+                # Need to reduce delta - sell shares (is_short=True)
                 direction = 'sell'
             else:
-                # Need to increase delta - buy shares
+                # Need to increase delta - buy shares (is_short=False)
                 direction = 'buy'
                 
             # Enforce maximum hedge ratio to prevent excessive hedging
@@ -493,7 +493,14 @@ class HedgingManager:
                 
                 # For buy/sell actions, convert to add/remove position operations
                 if action.lower() in ['buy', 'sell']:
+                    # ACTION CORRESPONDS DIRECTLY TO is_short:
+                    # 'sell' action means creating a short position (is_short=True, negative delta)
+                    # 'buy' action means creating a long position (is_short=False, positive delta)
                     is_short = action.lower() == 'sell'
+                    
+                    # Log the action and explain direction
+                    self.logger.info(f"[Hedging] Action: {action.upper()}, Setting is_short={is_short}")
+                    self.logger.info(f"[Hedging] Direction explanation: {'Short position will have negative delta' if is_short else 'Long position will have positive delta'}")
                     
                     # Check if we already have a position in this symbol
                     existing_position = self.portfolio.positions.get(symbol)
@@ -531,21 +538,17 @@ class HedgingManager:
                                     
                                     self.logger.info(f"[Hedging] Added new position: {remaining_quantity} {'short' if is_short else 'long'} {symbol} @ ${price:.2f}")
                             else:
-                                # Reduce the existing position by the quantity
-                                self.logger.info(f"[Hedging] Reducing existing position: {symbol} from {existing_position.contracts} to {existing_position.contracts - quantity} contracts")
-                                
-                                # Remove from the existing position
+                                # Reduce the existing position
+                                self.logger.info(f"[Hedging] Reducing existing position: {symbol} from {existing_position.contracts} to {existing_position.contracts - quantity}")
                                 self.portfolio.remove_position(
                                     symbol=symbol,
                                     quantity=quantity,
                                     price=price,
-                                    reason=f"Hedge reduction: {reason}"
+                                    reason=f"Hedge adjustment: {reason}"
                                 )
                         else:
-                            # Same direction, adjust quantity
-                            self.logger.info(f"[Hedging] Adjusting existing position: {symbol} from {existing_position.contracts} to {existing_position.contracts + quantity} contracts")
-                            
-                            # Add to the existing position
+                            # Same direction, just add to position
+                            self.logger.info(f"[Hedging] Adding to existing position: {symbol} (+{quantity} contracts)")
                             self.portfolio.add_position(
                                 symbol=symbol,
                                 quantity=quantity,
@@ -568,6 +571,7 @@ class HedgingManager:
                         )
                         
                         self.logger.info(f"[Hedging] Added new position: {quantity} {'short' if is_short else 'long'} {symbol} @ ${price:.2f}")
+                        self.logger.info(f"[Hedging] Position delta: {-quantity if is_short else quantity} (before normalizing to option contract equivalents)")
                         
                 elif action.lower() == 'close':
                     # Close an existing position
@@ -729,7 +733,9 @@ class HedgingManager:
         # Calculate required hedge contracts
         hedge_contracts = int(round(abs(adjusted_deviation) * 100)) if needs_hedging else 0
         
-        # Direction
+        # Direction - EXISTING LOGIC IS CORRECT (matches line ~220)
+        # When adjusted_deviation > 0, we need to sell shares (is_short=True, negative delta)
+        # When adjusted_deviation < 0, we need to buy shares (is_short=False, positive delta)
         direction = 'sell' if adjusted_deviation > 0 else 'buy' if adjusted_deviation < 0 else None
         
         return {

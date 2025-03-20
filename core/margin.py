@@ -42,6 +42,25 @@ class MarginCalculator:
         Returns:
             float: Margin requirement in dollars
         """
+        # Check if this is a base class instance and we should delegate to a specialized calculator
+        if self.__class__ == MarginCalculator and type(self).__name__ == 'MarginCalculator':
+            # For proper SPAN margin calculations, delegate to SPANMarginCalculator
+            if hasattr(position, 'option_type') or getattr(position, 'is_option', False):
+                # Only import here to avoid circular imports
+                from .margin import SPANMarginCalculator
+                if hasattr(self, 'logger'):
+                    self.logger.info(f"[Margin] Using specialized SPANMarginCalculator for option position margin")
+                
+                # Create a SPAN calculator with default parameters
+                span_calculator = SPANMarginCalculator(
+                    max_leverage=getattr(self, 'max_leverage', 1.0),
+                    hedge_credit_rate=0.8,  # Standard hedge credit rate
+                    logger=getattr(self, 'logger', None)
+                )
+                
+                # Delegate to the SPAN calculator for option positions
+                return span_calculator.calculate_position_margin(position)
+                
         # Validate position object
         if not hasattr(position, 'contracts'):
             if self.logger:
@@ -55,7 +74,20 @@ class MarginCalculator:
         if not hasattr(position, 'current_price') or position.current_price is None:
             return 0
 
-        # Basic margin calculation
+        # For stock/ETF positions, use RegT margin requirements (25% of position value)
+        if not hasattr(position, 'option_type') and not getattr(position, 'is_option', False):
+            position_value = position.current_price * position.contracts
+            reg_t_margin = max(position_value * 0.25, 2000 if position.contracts >= 100 else position_value * 0.25)
+            
+            if self.logger:
+                self.logger.debug(f"[Margin] Stock/ETF position {position.symbol}: {position.contracts} shares")
+                self.logger.debug(f"  Position value calculation: {position.current_price:.2f} × {position.contracts} = ${position_value:.2f}")
+                self.logger.debug(f"  RegT margin calculation: max(${position_value:.2f} × 0.25, ${2000 if position.contracts >= 100 else position_value * 0.25:.2f}) = ${reg_t_margin:.2f}")
+                self.logger.debug(f"  Final stock/ETF margin: ${reg_t_margin:.2f}")
+            
+            return reg_t_margin
+            
+        # Basic margin calculation for options
         leverage = getattr(self, 'max_leverage', 1.0)
 
         # Use either avg_entry_price or current_price
@@ -103,6 +135,27 @@ class MarginCalculator:
         Returns:
             dict: Dictionary with total margin and margin by position
         """
+        # Check if this is a base class instance and there's a subclass implementation
+        # If we're using a base MarginCalculator instance but a child class is expected
+        if self.__class__ == MarginCalculator and type(self).__name__ == 'MarginCalculator':
+            # Check if SPAN margin calculator should be used based on configuration
+            from .margin import SPANMarginCalculator
+            if hasattr(self, 'logger'):
+                self.logger.info(f"[Margin] Using base MarginCalculator, but child class may be needed. Checking if SPAN is required.")
+            
+            # Create a SPAN margin calculator with default parameters
+            span_calculator = SPANMarginCalculator(
+                max_leverage=getattr(self, 'max_leverage', 1.0),
+                hedge_credit_rate=0.8,  # Standard hedge credit rate
+                logger=getattr(self, 'logger', None)
+            )
+            
+            if hasattr(self, 'logger'):
+                self.logger.info(f"[Margin] Delegating to SPANMarginCalculator for proper hedge benefits")
+            
+            # Delegate to the SPAN calculator
+            return span_calculator.calculate_portfolio_margin(positions_or_portfolio)
+            
         # Handle the case where a Portfolio object is passed instead of a dictionary
         positions = {}
         
@@ -149,7 +202,8 @@ class MarginCalculator:
         
         return {
             'total_margin': total_margin,
-            'margin_by_position': margin_by_position
+            'margin_by_position': margin_by_position,
+            'hedging_benefits': 0  # Base calculator doesn't provide hedging benefits
         }
 
     def calculate_total_margin(self, positions: Dict[str, Position]) -> float:
@@ -348,144 +402,117 @@ class SPANMarginCalculator(MarginCalculator):
 
     def _calculate_scan_risk(self, position: Position) -> float:
         """
-        Calculate the scan risk component of SPAN margin.
-        
-        This simulates the worst-case scenario across price and
-        volatility scenarios to determine the risk of market moves.
+        Calculate scan risk (price and volatility risk) for a position.
         
         Args:
             position: Position to calculate scan risk for
             
         Returns:
-            float: Scan risk in dollars
+            float: Scan risk amount (dollar value)
         """
-        # Log that we're starting the scan risk calculation
-        if self.logger:
-            self.logger.info(f"[Scan Risk] Starting scan risk calculation for {position.symbol}")
-            self.logger.info(f"[Scan Risk] Position: {position.contracts} contracts, Price: ${position.current_price:.4f}")
-            
-            # Log additional option details if available
-            if hasattr(position, 'underlying_price'):
-                self.logger.info(f"[Scan Risk] Underlying price: ${position.underlying_price:.2f}")
-            if hasattr(position, 'current_delta'):
-                self.logger.info(f"[Scan Risk] Delta: {position.current_delta:.4f}")
-            if hasattr(position, 'current_gamma'):
-                self.logger.info(f"[Scan Risk] Gamma: {position.current_gamma:.6f}")
-            if hasattr(position, 'current_vega'):
-                self.logger.info(f"[Scan Risk] Vega: {position.current_vega:.6f}")
-        
-        # For non-option positions, use a simplified approach
+        # If position is not an option, return a basic margin calculation
         if not isinstance(position, OptionPosition):
-            # For stocks/ETFs, use a fixed percentage of position value
-            position_value = position.current_price * position.contracts
-            scan_risk = position_value * 0.05  # 5% market risk
-            
-            if self.logger:
-                self.logger.info(f"[Scan Risk] Stock/ETF position, simplified calculation: ${position_value:.2f} × 0.05 = ${scan_risk:.2f}")
-            
-            return scan_risk
+            return position.calculate_margin_requirement(self.max_leverage)
         
-        # For options, we need to calculate based on Greeks
-        # First, validate that we have the required Greek values
-        has_delta = hasattr(position, 'current_delta')
-        has_gamma = hasattr(position, 'current_gamma')
-        has_vega = hasattr(position, 'current_vega')
+        # Get position details
+        option_price = position.current_price
+        if option_price <= 0:
+            option_price = position.avg_entry_price
+
+        # For short positions, we're looking at potential losses
+        is_short = position.is_short
+        is_call = position.option_type.upper() in ['C', 'CALL']
+        is_put = position.option_type.upper() in ['P', 'PUT']
         
-        if not (has_delta and has_gamma):
-            # Log the missing Greeks
-            if self.logger:
-                self.logger.warning(f"[Scan Risk] Missing essential Greeks for {position.symbol}, using simplified calculation")
-                
-            # If missing Greeks, use a conservative approach based on option value
-            option_value = position.current_price * position.contracts * 100
-            scan_risk = option_value * 0.25  # 25% of option value
-            
-            if self.logger:
-                self.logger.info(f"[Scan Risk] Simplified calculation due to missing Greeks: ${option_value:.2f} × 0.25 = ${scan_risk:.2f}")
-                
-            return scan_risk
-        
-        # Get price move percentage from configuration or use default
-        price_move_pct = getattr(self, 'price_move_pct', 0.05)  # Default to 5% if not configured
-        
-        # Get volatility shift from configuration or use default 
-        vol_shift_pct = getattr(self, 'vol_shift_pct', 0.3)  # Default 30% vol shift if not configured
-        
-        # Get gamma scaling factor from configuration or use default
-        gamma_scaling_factor = getattr(self, 'gamma_scaling_factor', 0.3)  # Default 0.3 if not configured
-        
-        underlying_price = position.underlying_price if hasattr(position, 'underlying_price') and position.underlying_price > 0 else 100.0
-        price_move = underlying_price * price_move_pct
-        
-        if self.logger:
-            self.logger.info(f"[Scan Risk] Price move calculation: {price_move_pct:.0%} of ${underlying_price:.2f} = ${price_move:.2f}")
-        
-        # First-order approximation using delta
+        # Get option Greeks
         delta = position.current_delta
-        # Ensure we are using the contract multiplier (100) in delta calculations
-        contract_multiplier = 100
-        delta_effect = delta * price_move * position.contracts * contract_multiplier
-        
-        if self.logger:
-            self.logger.info(f"[Scan Risk] Delta effect calculation: {delta:.4f} × ${price_move:.2f} × {position.contracts} × {contract_multiplier} = ${delta_effect:.2f}")
-        
-        # Second-order approximation using gamma
         gamma = position.current_gamma
-        gamma_effect = 0.5 * gamma * (price_move ** 2) * position.contracts * contract_multiplier * gamma_scaling_factor
+        vega = position.current_vega
+        underlying_price = position.underlying_price
+        otm_amount = 0
         
+        # Log option details for debugging
         if self.logger:
-            self.logger.info(f"[Scan Risk] Gamma effect calculation: 0.5 × {gamma:.6f} × ${price_move:.2f}² × {position.contracts} × {contract_multiplier} × {gamma_scaling_factor} = ${gamma_effect:.2f}")
+            self.logger.debug(f"[Margin] Option type: {position.option_type}, Is short: {is_short}")
+            self.logger.debug(f"[Margin] Delta: {delta:.4f}, Gamma: {gamma:.6f}, Vega: {vega:.4f}")
+            self.logger.debug(f"[Margin] Underlying price: {underlying_price:.2f}")
+            self.logger.debug(f"[Margin] Strike price: {position.strike:.2f}")
+
+        # Ensure delta has the correct sign: 
+        # - Long call: positive delta
+        # - Short call: negative delta
+        # - Long put: negative delta
+        # - Short put: positive delta (for margin calculation)
+        # This is for CALCULATION only - not the stored value
+        calc_delta = delta
         
-        # Apply volatility multiplier to gamma effect to account for market stress
-        gamma_effect_with_vol = gamma_effect * self.volatility_multiplier
-        
-        if self.logger and self.volatility_multiplier != 1.0:
-            self.logger.info(f"[Scan Risk] Gamma effect with volatility multiplier: ${gamma_effect:.2f} × {self.volatility_multiplier:.2f} = ${gamma_effect_with_vol:.2f}")
-        
-        # Calculate the vega effect (only if vega is available)
-        vega_effect = 0
-        if has_vega:
-            # Calculate implied volatility shift based on configured percentage
-            vol_shift = vol_shift_pct  # Absolute volatility shift in percentage points
-            
-            # Vega is typically expressed as dollar change per 1% vol change
-            vega = position.current_vega
-            vega_effect = vega * vol_shift * position.contracts * contract_multiplier
-            
+        # Ensure the delta sign is correct for all option types
+        if is_short and is_call and delta > 0:
+            # Short call should have negative delta
+            calc_delta = -delta
             if self.logger:
-                self.logger.info(f"[Scan Risk] Vega effect calculation: {vega:.6f} × {vol_shift:.2f} × {position.contracts} × {contract_multiplier} = ${vega_effect:.2f}")
-        else:
+                self.logger.debug(f"[Margin] Flipping delta sign for short call: {delta:.4f} -> {calc_delta:.4f}")
+        elif is_short and is_put and delta < 0:
+            # Short put should have positive delta for risk calculation
+            calc_delta = abs(delta)
             if self.logger:
-                self.logger.warning(f"[Scan Risk] No vega data available for {position.symbol}, skipping volatility risk")
+                self.logger.debug(f"[Margin] Flipping delta sign for short put: {delta:.4f} -> {calc_delta:.4f}")
+        elif not is_short and is_call and delta < 0:
+            # Long call should have positive delta
+            calc_delta = abs(delta)
+            if self.logger:
+                self.logger.debug(f"[Margin] Flipping delta sign for long call: {delta:.4f} -> {calc_delta:.4f}")
+        elif not is_short and is_put and delta > 0:
+            # Long put should have negative delta
+            calc_delta = -delta
+            if self.logger:
+                self.logger.debug(f"[Margin] Flipping delta sign for long put: {delta:.4f} -> {calc_delta:.4f}")
+                
+        # Log the delta we're using for calculation
+        if self.logger:
+            self.logger.debug(f"[Margin] Using delta for calculation: {calc_delta:.4f}")
+
+        # Calculate price move risk scenarios
+        price_up_scenario = underlying_price * (1 + self.price_move_pct)
+        price_down_scenario = underlying_price * (1 - self.price_move_pct)
         
+        # Calculate the absolute price move amount (for gamma calculation)
+        price_move_amount = underlying_price * self.price_move_pct
+        
+        # Calculate delta risk component (price move effect)
+        delta_risk = calc_delta * price_move_amount
+        
+        # Calculate gamma risk component (convexity effect)
+        # For a price move of p, gamma effect is approximately 0.5 * gamma * p^2
+        gamma_risk = 0.5 * gamma * (price_move_amount ** 2)
+        
+        # Scale gamma risk to avoid overweighting
+        gamma_risk = gamma_risk * self.gamma_scaling_factor
+
+        # Calculate volatility risk component
+        # For a price move of p, vega effect is approximately vega * p
+        vega_risk = vega * price_move_amount
+
         # Combine all risk components
         # SPAN typically takes the worst case scenario across 16 scenarios
         # We're simplifying by using the sum of absolute effects as a conservative approach
-        delta_gamma_effect = delta_effect + gamma_effect_with_vol
-        total_effect = abs(delta_gamma_effect) + abs(vega_effect)
-        
-        # The total scan risk
-        scan_risk = total_effect
+        total_risk = abs(delta_risk) + abs(gamma_risk) + abs(vega_risk)
         
         # Calculate option premium for comparison
-        option_premium = position.current_price * position.contracts * contract_multiplier
+        option_premium = position.current_price * position.contracts * 100
         
         # Sanity check: if scan risk is suspiciously low compared to premium, apply a correction
         min_scan_risk_pct = getattr(self, 'min_scan_risk_percentage', 0.25)  # Default to 25% if not configured
-        if scan_risk < option_premium * min_scan_risk_pct:
+        if total_risk < option_premium * min_scan_risk_pct:
             if self.logger:
-                self.logger.warning(f"[Scan Risk] WARNING: Calculated scan risk (${scan_risk:.2f}) is suspiciously low compared to premium (${option_premium:.2f})")
+                self.logger.warning(f"[Scan Risk] WARNING: Calculated scan risk (${total_risk:.2f}) is suspiciously low compared to premium (${option_premium:.2f})")
                 self.logger.warning(f"[Scan Risk] Applying minimum scan risk of {min_scan_risk_pct*100:.0f}% of premium: ${option_premium * min_scan_risk_pct:.2f}")
-            scan_risk = max(scan_risk, option_premium * min_scan_risk_pct)
+            total_risk = max(total_risk, option_premium * min_scan_risk_pct)
         
         if self.logger:
-            if vega_effect:
-                self.logger.info(f"[Scan Risk] Combined risk: |${delta_gamma_effect:.2f}| + |${vega_effect:.2f}| = ${scan_risk:.2f}")
-            else:
-                self.logger.info(f"[Scan Risk] Combined risk: |${delta_gamma_effect:.2f}| = ${scan_risk:.2f}")
-            self.logger.info(f"[Scan Risk] Final scan risk for {position.symbol}: ${scan_risk:.2f}")
+            self.logger.info(f"[Scan Risk] Final scan risk for {position.symbol}: ${total_risk:.2f}")
         
-        return scan_risk
+        return total_risk
 
     def calculate_position_margin(self, position: Position) -> float:
         """
