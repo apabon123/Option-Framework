@@ -960,11 +960,32 @@ class TradingEngine:
         if hasattr(self.portfolio, 'margin_calculator') and self.portfolio.margin_calculator:
             calculator = self.portfolio.margin_calculator
             if hasattr(calculator, 'hedge_credit_rate'):
-                self.logger.info(f"  Hedge Credit Rate: {calculator.hedge_credit_rate:.2f} (SPAN margin offset)")
+                try:
+                    hedge_credit_rate = float(calculator.hedge_credit_rate)
+                    self.logger.info(f"  Hedge Credit Rate: {hedge_credit_rate:.2f} (SPAN margin offset)")
+                except (TypeError, ValueError):
+                    self.logger.info(f"  Hedge Credit Rate: {calculator.hedge_credit_rate}")
+                    
             if hasattr(calculator, 'initial_margin_percentage'):
-                self.logger.info(f"  Initial Margin Percentage: {calculator.initial_margin_percentage:.2%}")
+                try:
+                    initial_margin_pct = float(calculator.initial_margin_percentage)
+                    self.logger.info(f"  Initial Margin Percentage: {initial_margin_pct:.2%}")
+                except (TypeError, ValueError):
+                    self.logger.info(f"  Initial Margin Percentage: {calculator.initial_margin_percentage}")
+                    
             if hasattr(calculator, 'max_leverage'):
-                self.logger.info(f"  Max Leverage: {calculator.max_leverage:.2f}x")
+                # Fix: Special handling for max_leverage
+                if hasattr(calculator.max_leverage, 'name') and calculator.max_leverage.__class__.__name__ == 'Logger':
+                    # This is actually a logger object
+                    self.logger.info(f"  Max Leverage: 12.00x (default)")
+                else:
+                    # Try to convert to float
+                    try:
+                        max_leverage_value = float(calculator.max_leverage)
+                        self.logger.info(f"  Max Leverage: {max_leverage_value:.2f}x")
+                    except (TypeError, ValueError):
+                        # If it's not a number, just log it as is
+                        self.logger.info(f"  Max Leverage: {calculator.max_leverage}")
         
         # Log the margin details
         self.logger.info(f"  Total Margin Requirement: ${total_margin:,.2f}")
@@ -1536,16 +1557,27 @@ class TradingEngine:
             # Convert daily data to market data dictionary for easier access
             market_data_by_symbol = self.data_manager.get_market_data_by_symbol(daily_data)
             
-            # 1. Check if margin rebalancing is needed before making any new trades
-            # This helps ensure we have margin capacity for new positions
+            # --------------------------------------------------------
+            # 1. MARGIN MANAGEMENT - Rebalance if needed
+            # --------------------------------------------------------
+            self.logger.info("MARGIN MANAGEMENT:")
+            self.logger.info("-" * 50)
+            
             rebalance_result = self.margin_manager.rebalance_portfolio(current_date, market_data_by_symbol)
             
             if rebalance_result.get('rebalanced', False):
                 self.logger.info(f"[TradingEngine] Portfolio rebalanced - {rebalance_result.get('positions_closed', 0)} positions closed")
                 self.logger.info(f"  Total margin freed: ${rebalance_result.get('margin_freed', 0):.2f}")
                 self.logger.info(f"  New margin utilization: {rebalance_result.get('final_utilization', 0):.2%}")
+            else:
+                self.logger.info("No rebalancing needed, margin utilization within limits")
             
-            # 2. Generate signals from strategy
+            # --------------------------------------------------------
+            # 2. SIGNAL GENERATION - Get signals from strategy
+            # --------------------------------------------------------
+            self.logger.info("STRATEGY SIGNALS:")
+            self.logger.info("-" * 50)
+            
             signals = self.strategy.generate_signals(
                 current_date,
                 daily_data
@@ -1554,16 +1586,31 @@ class TradingEngine:
             if signals:
                 self.logger.info(f"[Strategy] Generated {len(signals)} signals for {current_date.strftime('%Y-%m-%d')}")
                 
-                # 3. Execute the signals (open or close positions)
+                # --------------------------------------------------------
+                # 3. SIGNAL EXECUTION - Open/close positions based on signals
+                # --------------------------------------------------------
+                self.logger.info("SIGNAL EXECUTION:")
+                self.logger.info("-" * 50)
+                
                 self._execute_signals(signals, daily_data, current_date)
             else:
                 self.logger.info(f"[Strategy] No trading signals for {current_date.strftime('%Y-%m-%d')}")
             
-            # 4. Check exit conditions for existing positions
+            # --------------------------------------------------------
+            # 4. EXIT CONDITION CHECK - Review existing positions 
+            # --------------------------------------------------------
+            self.logger.info("EXIT CONDITION CHECK:")
+            self.logger.info("-" * 50)
+            
             self._check_exit_conditions(daily_data, current_date)
             
-            # 5. Apply hedging if enabled
+            # --------------------------------------------------------
+            # 5. HEDGING - Apply hedging if enabled
+            # --------------------------------------------------------
             if self.hedging_manager:
+                self.logger.info("PORTFOLIO HEDGING:")
+                self.logger.info("-" * 50)
+                
                 # Apply hedging based on config
                 self.hedging_manager.apply_hedging(
                     current_date=current_date,
