@@ -496,19 +496,64 @@ class Portfolio:
         # Calculate Greeks
         greeks = self.get_portfolio_greeks()
         
-        # Calculate exposure metrics (margin based)
+        # Calculate exposure metrics using margin calculator when available
         total_margin = 0
-        for position in self.positions.values():
-            if hasattr(position, 'calculate_margin_requirement'):
-                margin = position.calculate_margin_requirement(1.0)  # Use basic margin without leverage
-                total_margin += margin
+        margin_by_position = {}
+        hedging_benefits = 0
+        
+        # Log margin calculation approach
+        if hasattr(self, 'logger'):
+            if self.margin_calculator:
+                calc_type = type(self.margin_calculator).__name__
+                self.logger.debug(f"[Portfolio] Using {calc_type} for margin calculation")
+            else:
+                self.logger.debug("[Portfolio] No margin calculator set, using position-level calculation")
+        
+        # If margin calculator is available, use it for portfolio-level margin calculation
+        if self.margin_calculator:
+            try:
+                # Use the portfolio margin calculator
+                margin_result = self.margin_calculator.calculate_portfolio_margin(self.positions)
+                
+                # Extract results
+                total_margin = margin_result.get('total_margin', 0)
+                margin_by_position = margin_result.get('margin_by_position', {})
+                hedging_benefits = margin_result.get('hedging_benefits', 0)
+                
+                if hasattr(self, 'logger'):
+                    self.logger.debug(f"[Portfolio] Portfolio margin calculation using {type(self.margin_calculator).__name__}:")
+                    self.logger.debug(f"  Total margin: ${total_margin:.2f}")
+                    self.logger.debug(f"  Hedging benefits: ${hedging_benefits:.2f}")
+                    
+            except Exception as e:
+                # Log the error and fall back to position-level calculation
+                if hasattr(self, 'logger'):
+                    self.logger.error(f"[Portfolio] Error using portfolio margin calculator: {e}")
+                    self.logger.info(f"[Portfolio] Falling back to position-level margin calculation")
+                
+                # Use position-level calculation as fallback
+                for position in self.positions.values():
+                    if hasattr(position, 'calculate_margin_requirement'):
+                        position_margin = position.calculate_margin_requirement(1.0)  # Use basic margin without leverage
+                        total_margin += position_margin
+                        if hasattr(position, 'symbol'):
+                            margin_by_position[position.symbol] = position_margin
+        else:
+            # No margin calculator available, use position-level margin calculation
+            for position in self.positions.values():
+                if hasattr(position, 'calculate_margin_requirement'):
+                    position_margin = position.calculate_margin_requirement(1.0)  # Use basic margin without leverage
+                    total_margin += position_margin
+                    if hasattr(position, 'symbol'):
+                        margin_by_position[position.symbol] = position_margin
         
         # Calculate available margin and leverage
         max_margin = portfolio_value  # Maximum margin is 1x NLV by default
         available_margin = max(max_margin - total_margin, 0)
         current_leverage = total_margin / portfolio_value if portfolio_value > 0 else 0
         
-        return {
+        # Create the metrics dictionary
+        metrics = {
             'portfolio_value': portfolio_value,
             'cash_balance': self.cash_balance,
             'position_value': self.position_value,
@@ -528,8 +573,13 @@ class Portfolio:
             'dollar_delta': greeks['dollar_delta'],
             'dollar_gamma': greeks['dollar_gamma'],
             'dollar_theta': greeks['dollar_theta'],
-            'dollar_vega': greeks['dollar_vega']
+            'dollar_vega': greeks['dollar_vega'],
+            'margin_by_position': margin_by_position,
+            'hedging_benefits': hedging_benefits,
+            'margin_calculator_type': type(self.margin_calculator).__name__ if self.margin_calculator else 'None'
         }
+        
+        return metrics
     
     def add_position(
         self,
@@ -991,16 +1041,34 @@ class Portfolio:
     def calculate_margin_requirement(self) -> float:
         """
         Calculate the total margin requirement for the portfolio.
-        This is just a wrapper for get_total_margin_requirement for compatibility.
+        This method uses the portfolio's margin calculator if available.
         
         Returns:
             float: Total margin requirement
         """
+        # If margin calculator is set, use it for consistent margin calculation
+        if self.margin_calculator:
+            try:
+                # Use the portfolio margin calculator's calculate_portfolio_margin method
+                margin_result = self.margin_calculator.calculate_portfolio_margin(self.positions)
+                if hasattr(self, 'logger'):
+                    self.logger.debug(f"[Portfolio] Margin calculation using {type(self.margin_calculator).__name__}")
+                    
+                # Return the total margin from the result
+                return margin_result.get('total_margin', 0)
+            except Exception as e:
+                # Log the error and fall back to position-level calculation
+                if hasattr(self, 'logger'):
+                    self.logger.error(f"[Portfolio] Error using margin calculator: {e}")
+                    self.logger.info("[Portfolio] Falling back to position-level margin calculation")
+        
+        # If no margin calculator or error, calculate each position's margin separately
         total_margin = 0
         for position in self.positions.values():
             if hasattr(position, 'calculate_margin_requirement'):
                 margin = position.calculate_margin_requirement(1.0)  # Use basic margin without leverage
                 total_margin += margin
+                
         return total_margin
         
     def get_total_liability(self) -> float:

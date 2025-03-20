@@ -947,9 +947,26 @@ class TradingEngine:
         
         # Log the basic margin info
         self.logger.info("Margin Details:")
-        self.logger.info("  Margin Method: SpanMargin")
-        self.logger.info("  Calculation Method: Portfolio Risk-Based")
-        self.logger.info("  Description: Risk-based approach with lower rates for index-based products")
+        
+        # Determine and log which margin calculator is being used
+        margin_calculator_type = "Unknown"
+        if hasattr(self.portfolio, 'margin_calculator') and self.portfolio.margin_calculator:
+            margin_calculator_type = type(self.portfolio.margin_calculator).__name__
+            self.logger.info(f"  Margin Calculator Type: {margin_calculator_type}")
+        else:
+            self.logger.info("  Margin Calculator: Not Set (Using position level calculation)")
+        
+        # Log configuration details for the calculator
+        if hasattr(self.portfolio, 'margin_calculator') and self.portfolio.margin_calculator:
+            calculator = self.portfolio.margin_calculator
+            if hasattr(calculator, 'hedge_credit_rate'):
+                self.logger.info(f"  Hedge Credit Rate: {calculator.hedge_credit_rate:.2f} (SPAN margin offset)")
+            if hasattr(calculator, 'initial_margin_percentage'):
+                self.logger.info(f"  Initial Margin Percentage: {calculator.initial_margin_percentage:.2%}")
+            if hasattr(calculator, 'max_leverage'):
+                self.logger.info(f"  Max Leverage: {calculator.max_leverage:.2f}x")
+        
+        # Log the margin details
         self.logger.info(f"  Total Margin Requirement: ${total_margin:,.2f}")
         self.logger.info(f"  Available Margin: ${available_margin:,.2f}")
         
@@ -965,8 +982,70 @@ class TradingEngine:
         else:
             self.logger.info(f"  Margin Utilization: N/A (NLV is zero or negative)")
         
-        # If detailed, show more margin info
+        # If detailed, show margin breakdown by position
         if detailed:
+            # Get margin by position if available in portfolio metrics
+            margin_by_position = {}
+            
+            # Calculate using portfolio's margin calculator if available
+            if hasattr(self.portfolio, 'margin_calculator') and self.portfolio.margin_calculator:
+                try:
+                    # Calculate portfolio margin with the portfolio's calculator
+                    margin_result = self.portfolio.margin_calculator.calculate_portfolio_margin(self.portfolio.positions)
+                    margin_by_position = margin_result.get('margin_by_position', {})
+                    hedging_benefits = margin_result.get('hedging_benefits', 0)
+                    
+                    # Log the total hedging benefits
+                    if hedging_benefits > 0:
+                        self.logger.info(f"  Hedging Benefits: ${hedging_benefits:,.2f}")
+                        self.logger.info(f"  Standalone Sum of Margins: ${(total_margin + hedging_benefits):,.2f}")
+                        hedge_reduction_pct = (hedging_benefits / (total_margin + hedging_benefits) * 100) if (total_margin + hedging_benefits) > 0 else 0
+                        self.logger.info(f"  Hedge Reduction: {hedge_reduction_pct:.2f}% of margin")
+                    
+                except Exception as e:
+                    self.logger.error(f"Error calculating portfolio margin: {e}")
+                    # Fall back to individual position calculation
+                    for symbol, position in self.portfolio.positions.items():
+                        if hasattr(position, 'calculate_margin_requirement'):
+                            margin_by_position[symbol] = position.calculate_margin_requirement(1.0)
+            else:
+                # Fall back to individual position calculation
+                for symbol, position in self.portfolio.positions.items():
+                    if hasattr(position, 'calculate_margin_requirement'):
+                        margin_by_position[symbol] = position.calculate_margin_requirement(1.0)
+            
+            # Show margin breakdown by position
+            if margin_by_position:
+                self.logger.info("  Margin Breakdown by Position:")
+                
+                # Sort positions by margin (highest first)
+                sorted_positions = sorted(
+                    margin_by_position.items(), 
+                    key=lambda x: x[1], 
+                    reverse=True
+                )
+                
+                # Log top positions by margin
+                for i, (symbol, margin) in enumerate(sorted_positions):
+                    position = self.portfolio.positions.get(symbol)
+                    position_type = "Option" if hasattr(position, 'option_type') else "Stock"
+                    is_short = getattr(position, 'is_short', False)
+                    direction = "Short" if is_short else "Long"
+                    
+                    # Format margin percentage of total
+                    margin_pct = (margin / total_margin * 100) if total_margin > 0 else 0
+                    
+                    # Get position details
+                    contracts = getattr(position, 'contracts', 0)
+                    
+                    self.logger.info(f"    {i+1}. {symbol} ({direction} {position_type}): ${margin:,.2f} ({margin_pct:.1f}%), {contracts} contracts")
+                    
+                    # Limit to top 10 positions if there are many
+                    if i >= 9 and len(sorted_positions) > 12:
+                        remaining = len(sorted_positions) - 10
+                        self.logger.info(f"    ... and {remaining} more positions")
+                        break
+            
             self.logger.info("--------------------------------------------------")
 
     def _log_post_trade_summary(self, current_date):
