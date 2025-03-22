@@ -277,20 +277,45 @@ When modifying the codebase, ensure:
 ```
 option-framework/
 ├── config/                     # YAML configuration files
-│   └── config.yaml             # Main configuration file
+│   ├── config.yaml             # Main configuration file
+│   └── risk_config.yaml        # Risk management configuration
 ├── core/                       # Core components and business logic
-│   ├── data_manager.py         # Data loading and preprocessing
+│   ├── data_manager.py         # Legacy data loading (see data_managers/)
 │   ├── hedging.py              # Delta hedging implementation
 │   ├── margin.py               # SPAN margin calculations
 │   ├── options_analysis.py     # Options pricing and volatility analysis
 │   ├── portfolio.py            # Portfolio management
 │   ├── position.py             # Position tracking
 │   ├── reporting.py            # Visualization and reporting
+│   ├── risk/                   # Risk management module
+│   │   ├── factory.py          # Risk manager factory
+│   │   ├── manager.py          # Risk manager implementations
+│   │   ├── metrics.py          # Risk metrics calculations
+│   │   └── parameters.py       # Risk parameters and configuration
 │   └── trading_engine.py       # Main backtesting engine
+├── data_managers/              # Enhanced data management system
+│   ├── base_data_manager.py    # Abstract base class for data managers
+│   ├── daily_data_manager.py   # Daily OHLC data manager
+│   ├── intraday_data_manager.py # Minute-level data with timezone support
+│   ├── option_data_manager.py  # Options data manager
+│   └── utils.py                # Data conversion utilities
+├── Reference/                  # Reference implementations and legacy code
+│   ├── IntraDayMom2_original.py # Original intraday momentum implementation
+│   ├── RunStrategies.py        # Legacy strategy runner
+│   └── theta_engine_2.py       # Legacy theta engine
 ├── strategies/                 # Strategy implementations
 │   ├── example_strategy.py     # Example option strategy
 │   └── theta_strategy.py       # Theta decay focused strategy
+├── examples/                   # Example usage scripts
+│   ├── data_manager_demo.py    # Demo of data manager functionality
+│   └── risk_data_integration_demo.py # Demo of risk management with data managers
 ├── tests/                      # Unit tests for validating functionality
+│   ├── conftest.py             # Test fixtures and configurations
+│   ├── data/                   # Test data files
+│   ├── unit/                   # Unit tests
+│   ├── integration/            # Integration tests
+│   ├── system/                 # End-to-end tests
+│   └── performance/            # Performance tests
 ├── main.py                     # Main entry point
 └── README.md                   # This file
 ```
@@ -422,3 +447,135 @@ risk_manager = RiskManagerFactory.create(config, risk_metrics, logger)
 # Calculate position size
 position_size = risk_manager.calculate_position_size(data, portfolio_metrics)
 ```
+
+## Data Management System
+
+The Option-Framework includes a comprehensive data management system designed to handle different types of financial data efficiently. The system is organized in a modular structure with specialized data managers for each data type:
+
+### Data Manager Types
+
+- **BaseDataManager**: Abstract base class that defines the common interface and shared functionality for all data managers.
+- **OptionDataManager**: Specialized for options data with features for filtering by strike, expiry, and calculating Greeks.
+- **IntradayDataManager**: Handles minute-level price data with timezone support and market hours filtering.
+- **DailyDataManager**: Manages daily OHLC data with features for calculating daily metrics and moving averages.
+
+### Key Features
+
+- **Timezone Handling**: Proper timezone management for intraday data to ensure accurate analysis across different markets.
+- **Data Validation**: Comprehensive validation and cleaning of data including OHLC validation and spread analysis.
+- **Format Conversion**: Utilities to detect data types and convert between different formats.
+- **Specialized Processing**: Each data type has specialized processing pipelines tailored to its unique characteristics.
+- **Unified Interface**: All data managers share a common interface while providing type-specific functionality.
+
+### Usage Examples
+
+```python
+# Working with options data
+from data_managers import OptionDataManager
+
+option_dm = OptionDataManager()
+options_data = option_dm.prepare_data_for_analysis(
+    "data/spy_options.csv", 
+    option_type="C",
+    min_dte=5, 
+    max_dte=30
+)
+
+# Working with intraday data (with timezone support)
+from data_managers import IntradayDataManager
+
+intraday_dm = IntradayDataManager({"timezone": "America/New_York"})
+minute_data = intraday_dm.prepare_data_for_analysis(
+    "data/spy_minute.csv",
+    days_to_analyze=20
+)
+
+# Working with daily data
+from data_managers import DailyDataManager
+
+daily_dm = DailyDataManager()
+daily_data = daily_dm.prepare_data_for_analysis(
+    "data/spy_daily.csv",
+    lookback_days=252  # 1 year of trading days
+)
+```
+
+### Data Conversion Utilities
+
+The framework includes utilities to help convert data between different formats:
+
+```python
+from data_managers.utils import convert_to_appropriate_format
+
+# Auto-detect data type and convert to standardized format
+standardized_file = convert_to_appropriate_format(
+    "raw_data/market_data.csv",
+    verbose=True
+)
+```
+
+For more detailed examples, see the `examples/data_manager_demo.py` script included with the framework.
+
+## Testing Framework
+
+The Option-Framework includes a comprehensive testing suite designed to ensure reliability, performance, and correctness of the trading system's core components. The testing framework is organized to support both rapid development and deeper validation:
+
+### Test Structure
+
+The testing suite follows a hierarchical structure:
+
+```
+tests/
+├── conftest.py                 # Shared fixtures and configurations
+├── data/                       # Test data files
+├── unit/                       # Tests for individual components
+├── integration/                # Tests for module interactions
+├── system/                     # End-to-end tests
+└── performance/                # Performance benchmarks
+```
+
+### Test Categories
+
+- **Unit Tests**: Validate individual functions and classes in isolation
+- **Integration Tests**: Verify that modules interact correctly with one another
+- **System Tests**: End-to-end tests that validate complete workflows
+- **Performance Tests**: Identify bottlenecks and ensure computational efficiency
+
+### Key Test Areas
+
+1. **Data Managers**: Tests for data loading, validation, and specialized processing
+2. **Margin Calculation**: Tests for SPAN margin calculations with various position types
+3. **Hedging Strategies**: Tests for delta hedging and boundary approach
+4. **Option Analysis**: Tests for pricing models and Greeks calculations
+5. **Portfolio Management**: Tests for position tracking and risk metrics
+6. **Risk Assessment**: Tests for various risk management approaches
+
+### Running Tests
+
+```bash
+# Run all tests
+pytest
+
+# Run specific test categories
+pytest tests/unit/
+pytest tests/integration/
+pytest tests/performance/
+
+# Run tests with coverage report
+pytest --cov=option_framework
+
+# Run tests for specific modules
+pytest tests/unit/test_margin.py
+```
+
+### Testing Fixtures
+
+The testing suite includes comprehensive fixtures for:
+- Sample options and stock data
+- Pre-configured portfolio with various positions
+- Market data for different scenarios
+- Risk and margin calculation configurations
+
+These fixtures provide standardized test environments for consistent and reproducible testing across the framework.
+
+The testing framework is designed to facilitate continuous integration and deployment, with tests that can be automatically executed as part of the development workflow to ensure that changes don't introduce regressions.
