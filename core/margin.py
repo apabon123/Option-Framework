@@ -31,6 +31,110 @@ class MarginCalculator:
         """
         self.max_leverage = max_leverage
         self.logger = logger or logging.getLogger('trading')
+        # Store direct reference to the logging manager if passed
+        self.logging_manager = None
+        if logger and hasattr(logger, 'component_log_levels'):
+            # This is likely our custom LoggingManager's logger
+            self.logging_manager = logger
+
+    def _should_log(self, level_name: str) -> bool:
+        """
+        Check if a message should be logged based on margin log level setting.
+        
+        Args:
+            level_name: Name of log level ('minimal', 'standard', 'verbose', 'debug')
+            
+        Returns:
+            bool: Whether the message should be logged
+        """
+        # For now, just return True to allow all logging (workaround for issue)
+        return True
+        
+        # The code below is disabled temporarily due to comparison issues
+        """
+        # If we don't have a logger, don't log
+        if not self.logger:
+            return False
+            
+        # Check if we have a component log level from our LoggingManager
+        component_level = None
+        
+        # If we have a direct reference to the logging manager with component levels
+        if hasattr(self, 'logging_manager') and self.logging_manager:
+            if hasattr(self.logging_manager, 'component_log_levels'):
+                component_level = self.logging_manager.component_log_levels.get('margin', 'standard')
+        
+        # If we don't have a component level, fall back to standard logging levels
+        if component_level is None:
+            log_level_map = {
+                'minimal': logging.WARNING,   # Always show
+                'standard': logging.INFO,     # Normal operation
+                'verbose': logging.DEBUG,     # Detailed operation
+                'debug': logging.DEBUG        # Debug details
+            }
+            return self.logger.isEnabledFor(log_level_map.get(level_name, logging.INFO))
+        
+        # Map between level names and their priority (higher number = more verbose)
+        level_priority = {
+            "minimal": 0,   # Most important, always show (least verbose)
+            "standard": 1,  # Normal operation
+            "verbose": 2,   # Detailed operation
+            "debug": 3      # Debug details (most verbose)
+        }
+        
+        # Get priority numbers - ensure they are integers
+        current_level_priority = level_priority.get(component_level, 1)  # Default to standard
+        message_level_priority = level_priority.get(level_name, 1)       # Default to standard
+        
+        # Safety check to prevent type comparison errors
+        if not isinstance(current_level_priority, int) or not isinstance(message_level_priority, int):
+            # If we encounter a type error, log a warning and default to allowing the log
+            print(f"WARNING: Invalid log level type comparison: {type(current_level_priority)} vs {type(message_level_priority)}")
+            return True
+        
+        # Log if message priority is less than or equal to the current level priority
+        return message_level_priority <= current_level_priority
+        """
+    
+    def log_minimal(self, message: str) -> None:
+        """
+        Log a minimal message that should always be shown.
+        
+        Args:
+            message: Message to log
+        """
+        if self.logger and self._should_log('minimal'):
+            self.logger.info(f"[Margin] {message}")
+            
+    def log_standard(self, message: str) -> None:
+        """
+        Log a standard message for normal operations.
+        
+        Args:
+            message: Message to log
+        """
+        if self.logger and self._should_log('standard'):
+            self.logger.info(f"[Margin] {message}")
+            
+    def log_verbose(self, message: str) -> None:
+        """
+        Log a verbose message with detailed calculation steps.
+        
+        Args:
+            message: Message to log
+        """
+        if self.logger and self._should_log('verbose'):
+            self.logger.debug(f"[Margin] {message}")
+            
+    def log_debug(self, message: str) -> None:
+        """
+        Log a debug message with implementation details.
+        
+        Args:
+            message: Message to log
+        """
+        if self.logger and self._should_log('debug'):
+            self.logger.debug(f"[Margin] {message}")
 
     def calculate_position_margin(self, position: Position) -> float:
         """
@@ -123,88 +227,161 @@ class MarginCalculator:
 
         return max(adjusted_margin, 0)  # Ensure non-negative margin
 
-    def calculate_portfolio_margin(self, positions_or_portfolio):
+    def calculate_portfolio_margin(self, positions: Dict[str, Position]) -> Dict[str, Any]:
         """
-        Calculate margin for a portfolio of positions, with safety checks.
-        
-        This improved version handles both dictionary of positions and Portfolio objects.
+        Calculate portfolio margin for a collection of positions.
+        Applies hedging benefits for offsetting positions in the same underlying.
         
         Args:
-            positions_or_portfolio: Dictionary of positions by symbol or Portfolio object
+            positions (dict): Dictionary of positions keyed by symbol
             
         Returns:
-            dict: Dictionary with total margin and margin by position
+            dict: Dictionary with margin amounts and hedging benefits
         """
-        # Check if this is a base class instance and there's a subclass implementation
-        # If we're using a base MarginCalculator instance but a child class is expected
-        if self.__class__ == MarginCalculator and type(self).__name__ == 'MarginCalculator':
-            # Check if SPAN margin calculator should be used based on configuration
-            from .margin import SPANMarginCalculator
-            if hasattr(self, 'logger'):
-                self.logger.info(f"[Margin] Using base MarginCalculator, but child class may be needed. Checking if SPAN is required.")
-            
-            # Create a SPAN margin calculator with default parameters
-            span_calculator = SPANMarginCalculator(
-                max_leverage=getattr(self, 'max_leverage', 1.0),
-                hedge_credit_rate=0.8,  # Standard hedge credit rate
-                logger=getattr(self, 'logger', None)
-            )
-            
-            if hasattr(self, 'logger'):
-                self.logger.info(f"[Margin] Delegating to SPANMarginCalculator for proper hedge benefits")
-            
-            # Delegate to the SPAN calculator
-            return span_calculator.calculate_portfolio_margin(positions_or_portfolio)
-            
-        # Handle the case where a Portfolio object is passed instead of a dictionary
-        positions = {}
-        
-        # Check if positions_or_portfolio is a Portfolio object
-        if hasattr(positions_or_portfolio, 'positions'):
-            positions = positions_or_portfolio.positions
-        # Check if it's already a dictionary
-        elif isinstance(positions_or_portfolio, dict):
-            positions = positions_or_portfolio
-        else:
-            # Return zero margin if input is invalid
-            if self.logger:
-                self.logger.warning(f"Invalid input to calculate_portfolio_margin: {type(positions_or_portfolio)}")
-            return {'total_margin': 0, 'margin_by_position': {}}
-        
         if not positions:
-            return {'total_margin': 0, 'margin_by_position': {}}
+            return {"total_margin": 0, "margin_by_position": {}, "hedging_benefits": 0}
         
-        # Calculate margin for each position with error handling
+        # Calculate standalone margin for each position
+        standalone_margin = 0
         margin_by_position = {}
-        total_margin = 0
+        
+        # Log the start of portfolio margin calculation - always show this
+        self.log_minimal(f"Portfolio calculation for {len(positions)} positions")
         
         for symbol, position in positions.items():
-            try:
-                # Ensure position is a valid Position object
-                if not hasattr(position, 'contracts'):
-                    if self.logger:
-                        self.logger.warning(f"Invalid position object for {symbol}: {type(position)}")
-                    continue
-                    
-                position_margin = self.calculate_position_margin(position)
-                margin_by_position[symbol] = position_margin
-                total_margin += position_margin
-            except Exception as e:
-                if self.logger:
-                    self.logger.error(f"Error calculating margin for {symbol}: {e}")
-                # Continue processing other positions
+            position_margin = self.calculate_position_margin(position)
+            standalone_margin += position_margin
+            margin_by_position[symbol] = position_margin
+            # Use standard level for per-position margin amounts
+            self.log_standard(f"{symbol}: Initial margin=${position_margin:.2f}")
+        
+        # Group positions by underlying
+        positions_by_underlying = {}
+        for symbol, position in positions.items():
+            underlying = None
+            if hasattr(position, 'underlying') and position.underlying:
+                underlying = position.underlying
+            else:
+                underlying = symbol  # Use symbol as underlying for non-options
+            
+            if underlying not in positions_by_underlying:
+                positions_by_underlying[underlying] = []
+            
+            positions_by_underlying[underlying].append(symbol)
+        
+        # Log grouped positions at verbose level - these details are usually not needed
+        self.log_verbose("Grouped positions by underlying:")
+        for underlying, symbols in positions_by_underlying.items():
+            self.log_verbose(f"  {underlying}: {symbols}")
+        
+        # Calculate hedging benefits
+        total_hedging_benefit = 0
+        
+        for underlying, symbols in positions_by_underlying.items():
+            # Skip if only one position for this underlying (no hedging benefit)
+            if len(symbols) <= 1:
                 continue
+            
+            # Calculate potential hedging benefit
+            underlying_positions = [positions[symbol] for symbol in symbols]
+            underlying_margin = sum(margin_by_position[symbol] for symbol in symbols)
+            
+            # Check for delta neutrality (approximate)
+            net_delta = 0
+            total_delta_exposure = 0
+            
+            # Calculate net delta consistently 
+            for position in underlying_positions:
+                # Track position delta for debugging
+                position_delta = 0
+                
+                if isinstance(position, OptionPosition):
+                    # For options, delta is per share, we need to multiply by 100 for the contract
+                    # This is the absolute value in dollars of the option delta
+                    current_delta = position.current_delta if hasattr(position, 'current_delta') else 0
+                    # The number of contracts
+                    contracts = position.contracts if hasattr(position, 'contracts') else 0
+                    # The underlying price
+                    underlying_price = position.underlying_price if hasattr(position, 'underlying_price') else 0
+                    
+                    if current_delta != 0 and contracts != 0 and underlying_price != 0:
+                        position_delta = current_delta * underlying_price * contracts * 100
+                        self.log_verbose(f"Option position {position.symbol}: Delta={current_delta:.4f}, Contracts={contracts}, Price=${underlying_price:.2f}, Delta dollars=${position_delta:.2f}")
+                    else:
+                        self.log_verbose(f"Option position {position.symbol}: Incomplete data for delta calculation")
+                        continue
+                else:
+                    # For stocks, calculate delta based on direction and number of shares
+                    direction = -1 if getattr(position, 'is_short', False) else 1
+                    shares = position.contracts if hasattr(position, 'contracts') else 0
+                    price = position.current_price if hasattr(position, 'current_price') else 0
+                    
+                    if shares != 0 and price != 0:
+                        position_delta = shares * direction * price
+                        self.log_verbose(f"Stock position {position.symbol}: Shares={shares}, Direction={direction}, Price=${price:.2f}, Delta dollars=${position_delta:.2f}")
+                    else:
+                        self.log_verbose(f"Stock position {position.symbol}: Incomplete data for delta calculation")
+                        continue
+                
+                net_delta += position_delta
+                total_delta_exposure += abs(position_delta)
+            
+            # Log detailed delta hedging calculations
+            self.log_minimal(f"Delta hedging calculation for {underlying}:")
+            self.log_minimal(f"  Net delta: ${net_delta:.2f}")
+            self.log_minimal(f"  Total delta exposure: ${total_delta_exposure:.2f}")
+            self.log_minimal(f"  Underlying margin: ${underlying_margin:.2f}")
+            
+            # Calculate hedge credit based on delta neutrality
+            hedge_credit = 0
+            
+            # Fix: Prevent division by zero and ensure we're using absolute values for calculations
+            delta_hedge_ratio = 0.0
+            if total_delta_exposure > 0 and underlying_margin > 0:
+                # Calculate neutrality as ratio of net to gross exposure
+                delta_hedge_ratio = 1.0 - (abs(net_delta) / total_delta_exposure)
+                self.log_minimal(f"  Delta hedge ratio calculation: 1.0 - (|{net_delta:.2f}| / {total_delta_exposure:.2f}) = {delta_hedge_ratio:.4f}")
+                
+                # Ensure ratio is between 0 and 1
+                delta_hedge_ratio = min(1.0, max(0.0, delta_hedge_ratio))
+                # Apply the hedge credit
+                hedge_credit_rate = getattr(self, 'hedge_credit_rate', 0.5)
+                hedge_credit = underlying_margin * delta_hedge_ratio * hedge_credit_rate
+                self.log_minimal(f"  Hedge credit: {underlying_margin:.2f} × {delta_hedge_ratio:.4f} × {hedge_credit_rate:.2f} = ${hedge_credit:.2f}")
+                
+                # Cap the hedging benefit to a maximum percentage of the underlying margin
+                max_hedge_benefit = underlying_margin * 0.8
+                if hedge_credit > max_hedge_benefit:
+                    self.log_minimal(f"  Capping hedge credit to 80% of margin: ${max_hedge_benefit:.2f}")
+                    hedge_credit = min(hedge_credit, max_hedge_benefit)
+                
+                # Ensure hedge_credit is never negative (which would increase margin)
+                hedge_credit = max(0, hedge_credit)
+            
+            # Track total hedging benefit
+            total_hedging_benefit += hedge_credit
+            
+            # Log hedging benefit at standard level
+            self.log_standard(f"Hedge benefit for {underlying}: ${hedge_credit:.2f} ({delta_hedge_ratio*100:.1f}% offset)")
         
-        # Log the portfolio margin
-        if self.logger:
-            self.logger.debug(f"[Margin] Portfolio of {len(positions)} positions")
-            self.logger.debug(f"  Total margin: ${total_margin:.2f}")
+        # Calculate portfolio margin as standalone margin minus hedging benefits
+        portfolio_margin = standalone_margin - total_hedging_benefit
         
-        return {
-            'total_margin': total_margin,
-            'margin_by_position': margin_by_position,
-            'hedging_benefits': 0  # Base calculator doesn't provide hedging benefits
+        # Always log the final margin calculation
+        self.log_minimal(f"Final portfolio margin: ${portfolio_margin:.2f}")
+        self.log_minimal(f"Hedging benefits: ${total_hedging_benefit:.2f}")
+        
+        # Prepare the results
+        result = {
+            "total_margin": portfolio_margin,
+            "margin_by_position": margin_by_position,
+            "hedging_benefits": total_hedging_benefit
         }
+        
+        # Log a summary
+        self.log_margin_summary(positions, result)
+        
+        return result
 
     def calculate_total_margin(self, positions: Dict[str, Position]) -> float:
         """
@@ -338,7 +515,8 @@ class SPANMarginCalculator(MarginCalculator):
             max_margin_to_premium_ratio: float = 20.0,  # Cap on margin-to-premium ratio
             otm_scaling_enabled: bool = True,  # Whether to scale margin for OTM options
             otm_minimum_scaling: float = 0.1,  # Minimum scaling for far OTM options (10%)
-            logger: Optional[logging.Logger] = None
+            logger: Optional[logging.Logger] = None,
+            params: Optional[Dict[str, Any]] = None
     ):
         """
         Initialize the SPAN margin calculator with configurable parameters.
@@ -358,8 +536,35 @@ class SPANMarginCalculator(MarginCalculator):
             otm_scaling_enabled: Whether to scale margin for OTM options
             otm_minimum_scaling: Minimum scaling for far OTM options (0.1 = 10%)
             logger: Logger instance
+            params: Dictionary containing all parameters (overrides individual parameters)
         """
         super().__init__(max_leverage, logger)
+        
+        # If params is provided, override individual parameters
+        if params:
+            max_leverage = params.get('max_leverage', max_leverage)
+            volatility_multiplier = params.get('volatility_multiplier', volatility_multiplier)
+            initial_margin_percentage = params.get('initial_margin_percentage', initial_margin_percentage)
+            maintenance_margin_percentage = params.get('maintenance_margin_percentage', maintenance_margin_percentage)
+            hedge_credit_rate = params.get('hedge_credit_rate', hedge_credit_rate)
+            price_move_pct = params.get('price_move_pct', price_move_pct)
+            vol_shift_pct = params.get('vol_shift_pct', vol_shift_pct)
+            gamma_scaling_factor = params.get('gamma_scaling_factor', gamma_scaling_factor)
+            min_scan_risk_percentage = params.get('min_scan_risk_percentage', min_scan_risk_percentage)
+            max_margin_to_premium_ratio = params.get('max_margin_to_premium_ratio', max_margin_to_premium_ratio)
+            otm_scaling_enabled = params.get('otm_scaling_enabled', otm_scaling_enabled)
+            otm_minimum_scaling = params.get('otm_minimum_scaling', otm_minimum_scaling)
+            
+            # If correlation_matrix is provided in params, try to convert it to a DataFrame
+            if 'correlation_matrix' in params:
+                correlation_matrix_data = params.get('correlation_matrix')
+                if isinstance(correlation_matrix_data, dict):
+                    try:
+                        correlation_matrix = pd.DataFrame(correlation_matrix_data)
+                    except Exception as e:
+                        if self.logger:
+                            self.logger.warning(f"Could not convert correlation_matrix from params to DataFrame: {e}")
+                
         self.volatility_multiplier = volatility_multiplier
         self.correlation_matrix = correlation_matrix
         self.initial_margin_percentage = initial_margin_percentage
@@ -402,293 +607,230 @@ class SPANMarginCalculator(MarginCalculator):
 
     def _calculate_scan_risk(self, position: Position) -> float:
         """
-        Calculate scan risk (price and volatility risk) for a position.
+        Calculate the scan risk (price movement risk) for a position.
         
         Args:
             position: Position to calculate scan risk for
             
         Returns:
-            float: Scan risk amount (dollar value)
+            float: Scan risk amount in dollars
         """
-        # If position is not an option, return a basic margin calculation
-        if not isinstance(position, OptionPosition):
-            return position.calculate_margin_requirement(self.max_leverage)
+        # Check if we have the required position attributes
+        required_attrs = ['contracts', 'current_price', 'underlying_price']
+        if not all(hasattr(position, attr) for attr in required_attrs):
+            missing = [attr for attr in required_attrs if not hasattr(position, attr)]
+            self.log_minimal(f"Missing attributes for scan risk: {missing}")
+            # Default to a simple calculation based on premium
+            premium = position.current_price * position.contracts * 100
+            return premium * 0.5  # 50% of premium as default risk
         
-        # Get position details
-        option_price = position.current_price
-        if option_price <= 0:
-            option_price = position.avg_entry_price
-
-        # For short positions, we're looking at potential losses
-        is_short = position.is_short
-        is_call = position.option_type.upper() in ['C', 'CALL']
-        is_put = position.option_type.upper() in ['P', 'PUT']
+        # Calculate price move based on configured percentage
+        price_move = position.underlying_price * self.price_move_pct
         
-        # Get option Greeks
-        delta = position.current_delta
-        gamma = position.current_gamma
-        vega = position.current_vega
-        underlying_price = position.underlying_price
-        otm_amount = 0
+        # Zero risk for long options (accounted for in portfolio valuation)
+        if not position.is_short:
+            return 0
         
-        # Log option details for debugging
-        if self.logger:
-            self.logger.debug(f"[Margin] Option type: {position.option_type}, Is short: {is_short}")
-            self.logger.debug(f"[Margin] Delta: {delta:.4f}, Gamma: {gamma:.6f}, Vega: {vega:.4f}")
-            self.logger.debug(f"[Margin] Underlying price: {underlying_price:.2f}")
-            self.logger.debug(f"[Margin] Strike price: {position.strike:.2f}")
-
-        # Ensure delta has the correct sign: 
-        # - Long call: positive delta
-        # - Short call: negative delta
-        # - Long put: negative delta
-        # - Short put: positive delta (for margin calculation)
-        # This is for CALCULATION only - not the stored value
-        calc_delta = delta
+        # Calculate delta effect (first-order price move impact)
+        delta_effect = 0
+        if hasattr(position, 'current_delta'):
+            # For short options, delta is in terms of option price change per $1 move in underlying
+            # Compute the dollar impact of the price move
+            delta_effect = position.current_delta * price_move * position.contracts * 100
+            self.log_verbose(f"Delta effect calculation:")
+            self.log_verbose(f"  Delta: {position.current_delta:.4f}")
+            self.log_verbose(f"  Price move: ${price_move:.2f}")
+            self.log_verbose(f"  Contracts: {position.contracts}")
+            self.log_verbose(f"  Delta effect: ${delta_effect:.2f}")
         
-        # Ensure the delta sign is correct for all option types
-        if is_short and is_call and delta > 0:
-            # Short call should have negative delta
-            calc_delta = -delta
-            if self.logger:
-                self.logger.debug(f"[Margin] Flipping delta sign for short call: {delta:.4f} -> {calc_delta:.4f}")
-        elif is_short and is_put and delta < 0:
-            # Short put should have positive delta for risk calculation
-            calc_delta = abs(delta)
-            if self.logger:
-                self.logger.debug(f"[Margin] Flipping delta sign for short put: {delta:.4f} -> {calc_delta:.4f}")
-        elif not is_short and is_call and delta < 0:
-            # Long call should have positive delta
-            calc_delta = abs(delta)
-            if self.logger:
-                self.logger.debug(f"[Margin] Flipping delta sign for long call: {delta:.4f} -> {calc_delta:.4f}")
-        elif not is_short and is_put and delta > 0:
-            # Long put should have negative delta
-            calc_delta = -delta
-            if self.logger:
-                self.logger.debug(f"[Margin] Flipping delta sign for long put: {delta:.4f} -> {calc_delta:.4f}")
+        # Calculate gamma effect (second-order price move impact)
+        gamma_effect = 0
+        if hasattr(position, 'current_gamma'):
+            # Gamma measures the rate of change of delta per $1 move in the underlying
+            # 0.5 * gamma * (price move)^2 gives the second-order approximation
+            gamma_effect = 0.5 * position.current_gamma * (price_move ** 2) * position.contracts * 100
+            
+            # Apply scaling factor to avoid overestimating gamma effects
+            gamma_effect *= self.gamma_scaling_factor
+            
+            self.log_verbose(f"Gamma effect calculation:")
+            self.log_verbose(f"  Gamma: {position.current_gamma:.6f}")
+            self.log_verbose(f"  Price move squared: ${price_move**2:.2f}")
+            self.log_verbose(f"  Scaling factor: {self.gamma_scaling_factor:.2f}")
+            self.log_verbose(f"  Gamma effect: ${gamma_effect:.2f}")
+        
+        # Calculate volatility effect (vega impact from volatility shifts)
+        vega_effect = 0
+        if hasattr(position, 'current_vega'):
+            # Vega measures option price change per 1% change in implied volatility
+            # Compute the dollar impact of the vol shift
+            vol_shift = self.vol_shift_pct * self.volatility_multiplier
+            vega_effect = position.current_vega * vol_shift * position.contracts * 100
+            
+            self.log_verbose(f"Volatility effect calculation:")
+            self.log_verbose(f"  Vega: {position.current_vega:.6f}")
+            self.log_verbose(f"  Vol shift: {vol_shift*100:.1f}%")
+            self.log_verbose(f"  Vega effect: ${vega_effect:.2f}")
+        
+        # Calculate theta effect (time decay over short period)
+        theta_effect = 0
+        if hasattr(position, 'current_theta'):
+            # For most margin calculations, we don't include favorable theta decay
+            # Only account for theta if it's unfavorable (typical for long options)
+            if position.current_theta > 0 and position.is_short:
+                theta_days = 1  # Consider 1 day of adverse movement
+                theta_effect = position.current_theta * theta_days * position.contracts * 100
                 
-        # Log the delta we're using for calculation
-        if self.logger:
-            self.logger.debug(f"[Margin] Using delta for calculation: {calc_delta:.4f}")
-
-        # Calculate price move risk scenarios
-        price_up_scenario = underlying_price * (1 + self.price_move_pct)
-        price_down_scenario = underlying_price * (1 - self.price_move_pct)
+                self.log_verbose(f"Theta effect calculation:")
+                self.log_verbose(f"  Theta: ${position.current_theta:.6f}")
+                self.log_verbose(f"  Days considered: {theta_days}")
+                self.log_verbose(f"  Theta effect: ${theta_effect:.2f}")
         
-        # Calculate the absolute price move amount (for gamma calculation)
-        price_move_amount = underlying_price * self.price_move_pct
+        # Sum all effects for total risk
+        # For short positions, positive effects are unfavorable (increase risk)
+        # For long positions, negative effects are unfavorable (increase risk)
+        total_risk = abs(delta_effect) + abs(gamma_effect) + abs(vega_effect) + abs(theta_effect)
         
-        # Calculate delta risk component (price move effect)
-        delta_risk = calc_delta * price_move_amount
+        # Apply volatility multiplier to add an extra safety margin in high-vol environments
+        total_risk *= self.volatility_multiplier
         
-        # Calculate gamma risk component (convexity effect)
-        # For a price move of p, gamma effect is approximately 0.5 * gamma * p^2
-        gamma_risk = 0.5 * gamma * (price_move_amount ** 2)
-        
-        # Scale gamma risk to avoid overweighting
-        gamma_risk = gamma_risk * self.gamma_scaling_factor
-
-        # Calculate volatility risk component
-        # For a price move of p, vega effect is approximately vega * p
-        vega_risk = vega * price_move_amount
-
-        # Combine all risk components
-        # SPAN typically takes the worst case scenario across 16 scenarios
-        # We're simplifying by using the sum of absolute effects as a conservative approach
-        total_risk = abs(delta_risk) + abs(gamma_risk) + abs(vega_risk)
-        
-        # Calculate option premium for comparison
-        option_premium = position.current_price * position.contracts * 100
-        
-        # Sanity check: if scan risk is suspiciously low compared to premium, apply a correction
-        min_scan_risk_pct = getattr(self, 'min_scan_risk_percentage', 0.25)  # Default to 25% if not configured
-        if total_risk < option_premium * min_scan_risk_pct:
-            if self.logger:
-                self.logger.warning(f"[Scan Risk] WARNING: Calculated scan risk (${total_risk:.2f}) is suspiciously low compared to premium (${option_premium:.2f})")
-                self.logger.warning(f"[Scan Risk] Applying minimum scan risk of {min_scan_risk_pct*100:.0f}% of premium: ${option_premium * min_scan_risk_pct:.2f}")
-            total_risk = max(total_risk, option_premium * min_scan_risk_pct)
-        
-        if self.logger:
-            self.logger.info(f"[Scan Risk] Final scan risk for {position.symbol}: ${total_risk:.2f}")
+        # Log summary of the scan risk calculation
+        self.log_standard(f"Scan risk components for {position.symbol}:")
+        self.log_standard(f"  Delta risk: ${abs(delta_effect):.2f}")
+        self.log_standard(f"  Gamma risk: ${abs(gamma_effect):.2f}")
+        self.log_standard(f"  Vega risk: ${abs(vega_effect):.2f}")
+        self.log_standard(f"  Theta risk: ${abs(theta_effect):.2f}")
+        self.log_standard(f"  Total scan risk: ${total_risk:.2f}")
         
         return total_risk
 
     def calculate_position_margin(self, position: Position) -> float:
         """
-        Calculate margin requirement for a position using SPAN methodology.
-
+        Calculate SPAN margin for a position.
+        
+        Implements a more sophisticated margin calculation that considers:
+        - Maximum price move scenarios
+        - Volatility shift scenarios
+        - Delta and gamma effects
+        - Time decay effects
+        
         Args:
             position: Position to calculate margin for
-
+            
         Returns:
             float: Margin requirement in dollars
         """
-        if position.contracts <= 0:
-            return 0
-
-        # Log the input position details at the very beginning
-        if self.logger:
-            self.logger.info(f"[Margin] Starting SPAN margin calculation for {position.symbol}")
-            self.logger.info(f"  Position type: {type(position).__name__}")
-            self.logger.info(f"  Contracts: {position.contracts}")
-            self.logger.info(f"  Current price: ${position.current_price:.4f}")
-            self.logger.info(f"  Is short: {position.is_short}")
-            
-            # Log additional option-specific properties if available
-            if hasattr(position, 'option_type'):
-                self.logger.info(f"  Option type: {position.option_type}")
-                self.logger.info(f"  Strike price: ${position.strike:.2f}")
-                self.logger.info(f"  Underlying price: ${position.underlying_price:.2f}")
-                if hasattr(position, 'current_delta'):
-                    self.logger.info(f"  Delta: {position.current_delta:.4f}")
-
-        # For stock/ETF positions used in hedging
-        if not isinstance(position, OptionPosition):
-            # For ETFs and stocks, use the RegT margin requirement (higher of 25% of position value or $2000)
-            position_value = position.current_price * position.contracts
-            reg_t_margin = max(position_value * 0.25, 2000 if position.contracts >= 100 else position_value * 0.25)
-
-            if self.logger:
-                self.logger.info(f"  Stock/ETF position {position.symbol}: {position.contracts} shares")
-                self.logger.info(f"  Position value calculation: {position.current_price:.2f} × {position.contracts} = ${position_value:.2f}")
-                self.logger.info(f"  RegT margin calculation: max(${position_value:.2f} × 0.25, ${2000 if position.contracts >= 100 else position_value * 0.25:.2f}) = ${reg_t_margin:.2f}")
-                self.logger.info(f"  Final stock/ETF margin: ${reg_t_margin:.2f}")
-
-            return reg_t_margin
-
-        # For option positions
-        # Log all the parameters that will be used in the calculation
-        if self.logger:
-            self.logger.info(f"  ===== Option Margin Calculation Steps =====")
-            self.logger.info(f"  Option symbol: {position.symbol}")
-            self.logger.info(f"  Option price per share: ${position.current_price:.4f}")
-            self.logger.info(f"  Contract multiplier: 100 (standard for equity options)")
-            self.logger.info(f"  Total premium per contract: ${position.current_price * 100:.2f}")
-            self.logger.info(f"  Number of contracts: {position.contracts}")
-            self.logger.info(f"  Total option value: ${position.current_price * position.contracts * 100:.2f}")
-            self.logger.info(f"  Underlying price: ${position.underlying_price:.2f}")
-            self.logger.info(f"  Initial margin percentage: {self.initial_margin_percentage:.2%}")
+        # Check if position is an option
+        is_option = hasattr(position, 'option_type') or getattr(position, 'is_option', False)
         
-        # Calculate option premium with contract multiplier properly applied
-        contract_multiplier = 100  # Standard for equity options
-        option_premium = position.current_price * position.contracts * contract_multiplier
+        # For non-option positions, delegate to parent class
+        if not is_option:
+            return super().calculate_position_margin(position)
         
-        if self.logger:
-            self.logger.info(f"  Option premium calculation: {position.current_price:.4f} × {position.contracts} × {contract_multiplier} = ${option_premium:.2f}")
+        # Log position info at standard level
+        self.log_standard(f"Starting SPAN margin calculation for {position.symbol}")
         
-        # Calculate notional value (underlying price * contracts * 100 shares per contract)
+        # Check for required attributes
+        if not all(hasattr(position, attr) for attr in ['contracts', 'current_price', 'underlying_price']):
+            required_attrs = ['contracts', 'current_price', 'underlying_price']
+            missing = [attr for attr in required_attrs if not hasattr(position, attr)]
+            self.log_minimal(f"Missing attributes for SPAN calculation: {missing}")
+            # Fall back to basic calculation
+            return super().calculate_position_margin(position)
+        
+        # Calculate option premium
+        premium = position.current_price * position.contracts * 100  # 100 shares per contract
+        
+        # Verbose logging for option details
+        self.log_verbose(f"Option details:")
+        self.log_verbose(f"  Type: {position.option_type}")
+        self.log_verbose(f"  Strike: ${position.strike:.2f}")
+        self.log_verbose(f"  Underlying price: ${position.underlying_price:.2f}")
+        self.log_verbose(f"  Current price per share: ${position.current_price:.4f}")
+        self.log_verbose(f"  Number of contracts: {position.contracts}")
+        self.log_verbose(f"  Premium: ${premium:.2f}")
+        
+        # Get contract multiplier
+        contract_multiplier = 100
+        
+        # Calculate notional value
         notional_value = position.underlying_price * position.contracts * contract_multiplier
         
-        # Add a safety check for zero underlying price
-        if position.underlying_price <= 0 and self.logger:
-            self.logger.warning(f"[Margin] WARNING: Zero or negative underlying price detected for {position.symbol}")
-            # Try to estimate a reasonable underlying price from option data
-            if hasattr(position, 'strike') and position.strike > 0:
-                estimated_price = position.strike
-                self.logger.warning(f"[Margin] Using strike price as estimate: ${estimated_price:.2f}")
-                notional_value = estimated_price * position.contracts * contract_multiplier
-        
-        if self.logger:
-            self.logger.info(f"  Notional calculation: {position.underlying_price:.2f} × {position.contracts} × {contract_multiplier} = ${notional_value:.2f}")
-
-        # ENHANCEMENT: Scale the margin percentage based on moneyness and delta
-        # For far OTM options, we'll use a reduced margin percentage
-        adjusted_margin_percentage = self.initial_margin_percentage
-        
-        # Check if we have delta information - use it to scale the margin
-        if hasattr(position, 'current_delta') and hasattr(position, 'strike'):
-            # Get the absolute value of delta (0 to 1)
-            abs_delta = abs(position.current_delta)
-            
-            # Calculate moneyness: how far ITM or OTM the option is
-            if position.option_type.upper() in ['C', 'CALL']:
-                moneyness = (position.underlying_price / position.strike) - 1
-            elif position.option_type.upper() in ['P', 'PUT']:
-                moneyness = 1 - (position.underlying_price / position.strike)
-            else:
-                # Default to 0 if option type is unknown
-                moneyness = 0
-                
-            # Log moneyness info
-            if self.logger:
-                self.logger.info(f"  Option moneyness: {moneyness:.2%}")
-                self.logger.info(f"  Absolute delta: {abs_delta:.4f}")
-            
-            # Scale the margin percentage based on moneyness and delta
-            # Far OTM options (negative moneyness) get reduced margin
-            if self.otm_scaling_enabled and moneyness < -0.05:  # More than 5% OTM
-                # The deeper OTM and smaller delta, the lower the margin percentage
-                # For very deep OTM options, this could be as low as 10% of the original
-                scaling_factor = min(1.0, max(self.otm_minimum_scaling, abs_delta * 5))  # 0.1 to 1.0 scaling
-                adjusted_margin_percentage *= scaling_factor
-                
-                if self.logger:
-                    self.logger.info(f"  Far OTM option detected. Scaling margin by factor: {scaling_factor:.2f}")
-                    self.logger.info(f"  Adjusted margin percentage: {adjusted_margin_percentage:.2%}")
-        
-        # Calculate initial margin based on adjusted notional
-        base_margin = notional_value * adjusted_margin_percentage
-        
-        if self.logger:
-            self.logger.info(f"  Base margin calculation: ${notional_value:.2f} × {adjusted_margin_percentage:.4f} = ${base_margin:.2f}")
-
-        # Calculate scan risk (risk of market move)
+        # Step 1: Calculate scan risk (max likely loss from market move)
         scan_risk = self._calculate_scan_risk(position)
         
-        if self.logger:
-            self.logger.info(f"  Scan risk from _calculate_scan_risk: ${scan_risk:.2f}")
-
-        # Use the maximum of base margin and scan risk
-        margin = max(base_margin, scan_risk)
+        # Step 2: Calculate base risk (minimum required margin based on price and leverage)
+        # Initial margin is 10% of notional by default
+        initial_margin = notional_value * self.initial_margin_percentage / self.max_leverage
         
-        if self.logger:
-            self.logger.info(f"  Initial margin (max of base_margin and scan_risk): ${margin:.2f}")
-        
-        # Ensure margin is never less than option premium for short options
+        # Step 3: Determine if premium-based minimum should apply
+        min_premium_margin = premium * 1.0  # 100% of premium as minimum for long options
         if position.is_short:
-            old_margin = margin
-            margin = max(margin, option_premium)
-            
-            if self.logger:
-                if margin > old_margin:
-                    self.logger.warning(f"  Short option premium (${option_premium:.2f}) is higher than calculated margin (${old_margin:.2f})")
-                    self.logger.warning(f"  Setting margin to option premium: ${margin:.2f}")
-                else:
-                    self.logger.info(f"  Short option premium: ${option_premium:.2f} (margin is already higher)")
-
-        # ENHANCEMENT: Apply a cap on the margin-to-premium ratio
-        # Industry practice typically has a maximum ratio, especially for OTM options
-        if option_premium > 0:
-            margin_to_premium_ratio = margin / option_premium
-            
-            if margin_to_premium_ratio > self.max_margin_to_premium_ratio:
-                capped_margin = option_premium * self.max_margin_to_premium_ratio
-                
-                if self.logger:
-                    self.logger.warning(f"  Margin-to-premium ratio too high: {margin_to_premium_ratio:.2f}x")
-                    self.logger.warning(f"  Capping margin at {self.max_margin_to_premium_ratio:.1f}x premium: ${capped_margin:.2f}")
-                
-                margin = capped_margin
-
-        # Check if computed margin is suspiciously low compared to premium
-        if margin < option_premium * 0.5 and option_premium > 0:
-            if self.logger:
-                self.logger.warning(f"  WARNING: Calculated margin (${margin:.2f}) is much lower than premium (${option_premium:.2f})")
-                self.logger.warning(f"  This may indicate a missing contract multiplier (100x) in the calculation")
-            # Apply the contract multiplier to the margin if it appears to be missing
-            corrected_margin = margin * contract_multiplier
-            if self.logger:
-                self.logger.warning(f"  Automatically correcting: ${margin:.2f} → ${corrected_margin:.2f}")
-            margin = corrected_margin
+            min_premium_margin = premium * 1.5  # 150% of premium for short options
         
-        if self.logger:
-            if option_premium > 0:
-                self.logger.info(f"  Final margin-to-premium ratio: {margin/option_premium:.2f}x")
-            self.logger.info(f"  Final margin for {position.symbol}: ${margin:.2f}")
-            self.logger.info(f"  ===== End of Margin Calculation =====")
-
-        return margin
+        # Step 4: Apply OTM scaling if enabled
+        if self.otm_scaling_enabled and hasattr(position, 'strike'):
+            # Calculate out-of-the-money amount
+            if position.option_type.lower() == 'call':
+                otm_amount = max(0, position.strike - position.underlying_price)
+                moneyness = position.underlying_price / position.strike if position.strike > 0 else 0
+            else:  # Put
+                otm_amount = max(0, position.underlying_price - position.strike)
+                moneyness = position.strike / position.underlying_price if position.underlying_price > 0 else 0
+            
+            # Calculate scaling factor based on moneyness
+            # Deep OTM options get reduced margin requirements
+            otm_scaling = max(self.otm_minimum_scaling, min(1.0, moneyness))
+            
+            # Apply OTM scaling to scan risk and initial margin
+            scan_risk *= otm_scaling
+            initial_margin *= otm_scaling
+            
+            # Log OTM scaling details at verbose level
+            self.log_verbose(f"OTM scaling:")
+            self.log_verbose(f"  OTM amount: ${otm_amount:.2f}")
+            self.log_verbose(f"  Moneyness: {moneyness:.4f}")
+            self.log_verbose(f"  Applied scaling factor: {otm_scaling:.4f}")
+        
+        # Step 5: Ensure minimum scan risk
+        min_scan_risk = premium * self.min_scan_risk_percentage
+        if scan_risk < min_scan_risk:
+            self.log_verbose(f"Raising scan risk to minimum value:")
+            self.log_verbose(f"  Original scan risk: ${scan_risk:.2f}")
+            self.log_verbose(f"  Minimum scan risk: ${min_scan_risk:.2f} ({self.min_scan_risk_percentage*100:.0f}% of premium)")
+            scan_risk = min_scan_risk
+        
+        # Step 6: Calculate total SPAN margin
+        span_margin = max(initial_margin, scan_risk)
+        
+        # Step 7: Cap margin for extremely expensive options
+        max_margin = premium * self.max_margin_to_premium_ratio
+        if span_margin > max_margin:
+            self.log_verbose(f"Capping margin at maximum ratio to premium:")
+            self.log_verbose(f"  Original margin: ${span_margin:.2f}")
+            self.log_verbose(f"  Maximum margin: ${max_margin:.2f} ({self.max_margin_to_premium_ratio}x premium)")
+            span_margin = max_margin
+        
+        # Apply the margin treatment based on whether position is long or short
+        if not position.is_short:
+            # For long options, the maximum potential loss is the premium paid
+            # But that's already accounted for in portfolio valuation, so zero margin
+            self.log_standard(f"Long option position - margin requirement: $0.00")
+            return 0
+        
+        # For short options, apply the calculated margin
+        # Log final margin calculation at standard level
+        self.log_standard(f"Final margin for {position.symbol}: ${span_margin:.2f}")
+        self.log_standard(f"Components: Scan risk=${scan_risk:.2f}, Initial margin=${initial_margin:.2f}")
+        
+        # More detailed debug information
+        self.log_debug(f"Margin calculation factors:")
+        self.log_debug(f"  Underlying price: ${position.underlying_price:.2f}")
+        self.log_debug(f"  Initial margin %: {self.initial_margin_percentage:.4f}")
+        self.log_debug(f"  Max leverage: {self.max_leverage:.2f}")
+        self.log_debug(f"  Volatility multiplier: {self.volatility_multiplier:.2f}")
+        
+        return span_margin
 
     def _extract_underlying_symbol(self, position: Position) -> str:
         """
@@ -719,6 +861,43 @@ class SPANMarginCalculator(MarginCalculator):
         # For stock/ETF positions, just return the symbol
         return position.symbol
 
+    def log_margin_summary(self, positions: Dict[str, Position], margin_result: Dict[str, Any]) -> None:
+        """
+        Log a concise summary of margin calculations.
+        Always shown regardless of log level setting.
+        
+        Args:
+            positions: Dictionary of positions keyed by symbol
+            margin_result: Result dictionary from calculate_portfolio_margin
+        """
+        if not self.logger:
+            return
+            
+        total_positions = len(positions)
+        total_margin = margin_result.get('total_margin', 0)
+        hedging_benefits = margin_result.get('hedging_benefits', 0)
+        
+        # Calculate total value of positions
+        total_value = 0
+        for position in positions.values():
+            if hasattr(position, 'position_value'):
+                total_value += position.position_value
+            elif hasattr(position, 'current_price') and hasattr(position, 'contracts'):
+                multiplier = 100 if hasattr(position, 'option_type') else 1
+                total_value += position.current_price * position.contracts * multiplier
+                
+        # Calculate margin utilization if we have a total value
+        margin_utilization = (total_margin / total_value) * 100 if total_value > 0 else 0
+        
+        # Make this stand out in the logs
+        self.log_minimal("======= MARGIN CALCULATION SUMMARY =======")
+        self.log_minimal(f"Total positions: {total_positions}")
+        self.log_minimal(f"Total margin: ${total_margin:.2f}")
+        self.log_minimal(f"Hedging benefits: ${hedging_benefits:.2f}")
+        self.log_minimal(f"Position value: ${total_value:.2f}")
+        self.log_minimal(f"Margin utilization: {margin_utilization:.2f}%")
+        self.log_minimal("=========================================")
+    
     def calculate_portfolio_margin(self, positions: Dict[str, Position]) -> Dict[str, Any]:
         """
         Calculate portfolio margin for a collection of positions.
@@ -737,15 +916,15 @@ class SPANMarginCalculator(MarginCalculator):
         standalone_margin = 0
         margin_by_position = {}
         
+        # Log the start of portfolio margin calculation - always show this
+        self.log_minimal(f"Portfolio calculation for {len(positions)} positions")
+        
         for symbol, position in positions.items():
             position_margin = self.calculate_position_margin(position)
             standalone_margin += position_margin
             margin_by_position[symbol] = position_margin
-            if self.logger:
-                self.logger.debug(f"[Margin] {symbol}: Initial margin=${position_margin:.2f}")
-        
-        if self.logger:
-            self.logger.debug(f"[Margin] Portfolio of {len(positions)} positions")
+            # Use standard level for per-position margin amounts
+            self.log_standard(f"{symbol}: Initial margin=${position_margin:.2f}")
         
         # Group positions by underlying
         positions_by_underlying = {}
@@ -761,106 +940,119 @@ class SPANMarginCalculator(MarginCalculator):
             
             positions_by_underlying[underlying].append(symbol)
         
-        if self.logger:
-            self.logger.debug("[Margin] Grouped positions by underlying:")
-            for underlying, symbols in positions_by_underlying.items():
-                self.logger.debug(f"  {underlying}: {symbols}")
+        # Log grouped positions at verbose level - these details are usually not needed
+        self.log_verbose("Grouped positions by underlying:")
+        for underlying, symbols in positions_by_underlying.items():
+            self.log_verbose(f"  {underlying}: {symbols}")
         
-        # Calculate delta-based hedging offsets for each underlying group
+        # Calculate hedging benefits
         total_hedging_benefit = 0
         
         for underlying, symbols in positions_by_underlying.items():
+            # Skip if only one position for this underlying (no hedging benefit)
             if len(symbols) <= 1:
-                continue  # Need at least 2 positions for hedging
+                continue
             
-            # Calculate position deltas for this underlying
-            position_deltas = {}
+            # Calculate potential hedging benefit
+            underlying_positions = [positions[symbol] for symbol in symbols]
+            underlying_margin = sum(margin_by_position[symbol] for symbol in symbols)
+            
+            # Check for delta neutrality (approximate)
             net_delta = 0
-            total_absolute_delta = 0
+            total_delta_exposure = 0
             
-            for symbol in symbols:
-                position = positions[symbol]
+            # Calculate net delta consistently 
+            for position in underlying_positions:
+                # Track position delta for debugging
+                position_delta = 0
                 
-                # Calculate delta based on position type
                 if isinstance(position, OptionPosition):
-                    # Get the option delta value - sign is already flipped for short positions
-                    # in the OptionPosition constructor
-                    delta_value = position.current_delta
+                    # For options, delta is per share, we need to multiply by 100 for the contract
+                    # This is the absolute value in dollars of the option delta
+                    current_delta = position.current_delta if hasattr(position, 'current_delta') else 0
+                    # The number of contracts
+                    contracts = position.contracts if hasattr(position, 'contracts') else 0
+                    # The underlying price
+                    underlying_price = position.underlying_price if hasattr(position, 'underlying_price') else 0
                     
-                    # Convert to total delta for the position
-                    position_delta = delta_value * position.contracts * 100  # 100 shares per contract
-                    
-                    if self.logger:
-                        self.logger.debug(f"  Added delta for {symbol} (Option): {position_delta:.2f}")
+                    if current_delta != 0 and contracts != 0 and underlying_price != 0:
+                        position_delta = current_delta * underlying_price * contracts * 100
+                        self.log_verbose(f"Option position {position.symbol}: Delta={current_delta:.4f}, Contracts={contracts}, Price=${underlying_price:.2f}, Delta dollars=${position_delta:.2f}")
+                    else:
+                        self.log_verbose(f"Option position {position.symbol}: Incomplete data for delta calculation")
+                        continue
                 else:
-                    # For stocks/ETFs, each share has a delta of 1.0
-                    # CRITICAL FIX: Do NOT multiply by 100 for stock positions!
-                    # Each share already has a delta of 1.0
-                    position_delta = position.contracts
+                    # For stocks, calculate delta based on direction and number of shares
+                    direction = -1 if getattr(position, 'is_short', False) else 1
+                    shares = position.contracts if hasattr(position, 'contracts') else 0
+                    price = position.current_price if hasattr(position, 'current_price') else 0
                     
-                    # Apply sign based on position direction
-                    if position.is_short:
-                        position_delta = -position_delta
-                    
-                    if self.logger:
-                        self.logger.debug(f"  Using stock delta for {symbol}: {position_delta:.2f}")
-                        self.logger.debug(f"  Added delta for {symbol} (Stock/ETF): {position_delta:.2f}")
+                    if shares != 0 and price != 0:
+                        position_delta = shares * direction * price
+                        self.log_verbose(f"Stock position {position.symbol}: Shares={shares}, Direction={direction}, Price=${price:.2f}, Delta dollars=${position_delta:.2f}")
+                    else:
+                        self.log_verbose(f"Stock position {position.symbol}: Incomplete data for delta calculation")
+                        continue
                 
-                position_deltas[symbol] = position_delta
                 net_delta += position_delta
-                total_absolute_delta += abs(position_delta)
+                total_delta_exposure += abs(position_delta)
             
-            if self.logger:
-                self.logger.debug(f"[Margin] Position deltas for {underlying} group:")
-                for symbol, delta in position_deltas.items():
-                    position_type = "Option" if isinstance(positions[symbol], OptionPosition) else "Stock/ETF"
-                    self.logger.debug(f"  {symbol} ({position_type}): Delta={delta:.2f}")
-                self.logger.debug(f"  Net delta: {net_delta:.2f}")
-                self.logger.debug(f"  Total absolute delta: {total_absolute_delta:.2f}")
+            # Log detailed delta hedging calculations
+            self.log_minimal(f"Delta hedging calculation for {underlying}:")
+            self.log_minimal(f"  Net delta: ${net_delta:.2f}")
+            self.log_minimal(f"  Total delta exposure: ${total_delta_exposure:.2f}")
+            self.log_minimal(f"  Underlying margin: ${underlying_margin:.2f}")
             
-            # Check if positions are in opposite directions - if net delta is less than total absolute delta
-            # that means there's some offsetting happening
-            if abs(net_delta) < total_absolute_delta:
-                # Calculate delta hedge quality (how well the positions offset)
-                # A perfect hedge would have net_delta = 0 and delta_hedge_quality = 1.0
-                delta_hedge_quality = 1.0 - (abs(net_delta) / total_absolute_delta)
+            # Calculate hedge credit based on delta neutrality
+            hedge_credit = 0
+            
+            # Fix: Prevent division by zero and ensure we're using absolute values for calculations
+            delta_hedge_ratio = 0.0
+            if total_delta_exposure > 0 and underlying_margin > 0:
+                # Calculate neutrality as ratio of net to gross exposure
+                delta_hedge_ratio = 1.0 - (abs(net_delta) / total_delta_exposure)
+                self.log_minimal(f"  Delta hedge ratio calculation: 1.0 - (|{net_delta:.2f}| / {total_delta_exposure:.2f}) = {delta_hedge_ratio:.4f}")
                 
-                # Apply offset factor based on hedge quality
-                offset_factor = self.hedge_credit_rate * delta_hedge_quality
+                # Ensure ratio is between 0 and 1
+                delta_hedge_ratio = min(1.0, max(0.0, delta_hedge_ratio))
+                # Apply the hedge credit
+                hedge_credit_rate = getattr(self, 'hedge_credit_rate', 0.5)
+                hedge_credit = underlying_margin * delta_hedge_ratio * hedge_credit_rate
+                self.log_minimal(f"  Hedge credit: {underlying_margin:.2f} × {delta_hedge_ratio:.4f} × {hedge_credit_rate:.2f} = ${hedge_credit:.2f}")
                 
-                # Calculate the margin for this group
-                group_margin = sum(margin_by_position[symbol] for symbol in symbols)
-                group_hedging_benefit = group_margin * offset_factor
+                # Cap the hedging benefit to a maximum percentage of the underlying margin
+                max_hedge_benefit = underlying_margin * 0.8
+                if hedge_credit > max_hedge_benefit:
+                    self.log_minimal(f"  Capping hedge credit to 80% of margin: ${max_hedge_benefit:.2f}")
+                    hedge_credit = min(hedge_credit, max_hedge_benefit)
                 
-                if self.logger:
-                    self.logger.debug(f"  [Margin] Partial delta hedge ({delta_hedge_quality*100:.1f}% effective) - applying partial offset")
-                    self.logger.debug(f"[Margin] Hedging benefit for {underlying} group: ${group_hedging_benefit:.2f}")
-                    self.logger.debug(f"  Net delta: {net_delta:.2f}, Total absolute delta: {total_absolute_delta:.2f}")
-                    self.logger.debug(f"  Delta hedge quality: {delta_hedge_quality*100:.1f}% effective")
-                    self.logger.debug(f"  Offset factor: {offset_factor:.2f}")
-                    self.logger.debug(f"  Standalone margin: ${group_margin:.2f}")
-                    self.logger.debug(f"  Reduced margin: ${group_margin - group_hedging_benefit:.2f}")
-                
-                total_hedging_benefit += group_hedging_benefit
-            else:
-                if self.logger:
-                    self.logger.debug(f"[Margin] No hedging benefit for {underlying} group - all positions in same direction")
-                    self.logger.debug(f"  Net delta: {net_delta:.2f}")
-                    self.logger.debug(f"  Standalone margin: ${sum(margin_by_position[symbol] for symbol in symbols):.2f}")
+                # Ensure hedge_credit is never negative (which would increase margin)
+                hedge_credit = max(0, hedge_credit)
+            
+            # Track total hedging benefit
+            total_hedging_benefit += hedge_credit
+            
+            # Log hedging benefit at standard level
+            self.log_standard(f"Hedge benefit for {underlying}: ${hedge_credit:.2f} ({delta_hedge_ratio*100:.1f}% offset)")
         
-        # Apply the total hedging benefit
+        # Calculate portfolio margin as standalone margin minus hedging benefits
         portfolio_margin = standalone_margin - total_hedging_benefit
         
-        if self.logger:
-            self.logger.info("[Margin] Portfolio margin calculation complete")
-            self.logger.info(f"  Total margin: ${portfolio_margin:.2f}")
-            self.logger.info(f"  Total hedging benefits: ${total_hedging_benefit:.2f}")
+        # Always log the final margin calculation
+        self.log_minimal(f"Final portfolio margin: ${portfolio_margin:.2f}")
+        self.log_minimal(f"Hedging benefits: ${total_hedging_benefit:.2f}")
         
-        return {
+        # Prepare the results
+        result = {
             "total_margin": portfolio_margin,
             "margin_by_position": margin_by_position,
             "hedging_benefits": total_hedging_benefit
         }
+        
+        # Log a summary
+        self.log_margin_summary(positions, result)
+        
+        return result
 
     def test_option_margin_calculation(self, option_price: float, underlying_price: float, contracts: int = 1):
         """

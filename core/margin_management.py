@@ -60,7 +60,18 @@ class PortfolioRebalancer:
         if self.use_portfolio_calculator and hasattr(self.portfolio, 'margin_calculator'):
             self.margin_calculator = self.portfolio.margin_calculator
             if self.logger:
-                self.logger.info(f"[PortfolioRebalancer] Using portfolio's margin calculator: {type(self.margin_calculator).__name__}")
+                # Get user-friendly calculator type name
+                calc_class_name = type(self.margin_calculator).__name__
+                calc_display_name = calc_class_name
+                
+                if calc_class_name == "SPANMarginCalculator":
+                    calc_display_name = "SPAN"
+                elif calc_class_name == "OptionMarginCalculator":
+                    calc_display_name = "Option"
+                elif calc_class_name == "MarginCalculator":
+                    calc_display_name = "Basic"
+                
+                self.logger.info(f"[PortfolioRebalancer] Using portfolio's margin calculator: {calc_display_name}")
         
         # Rebalance cooldown settings
         self.rebalance_cooldown_days = self.margin_config.get('rebalance_cooldown_days', 3)
@@ -178,11 +189,36 @@ class PortfolioRebalancer:
         self.logger.info(f"  Calculation method: {self.margin_calculation_method}")
         self.logger.info(f"  Use portfolio calculator: {self.use_portfolio_calculator}")
         self.logger.info(f"  Portfolio has margin calculator: {hasattr(self.portfolio, 'margin_calculator')}")
+        
         if hasattr(self.portfolio, 'margin_calculator'):
-            self.logger.info(f"  Portfolio margin calculator type: {type(self.portfolio.margin_calculator).__name__}")
+            # Get user-friendly calculator type name for portfolio's calculator
+            calc_class_name = type(self.portfolio.margin_calculator).__name__
+            calc_display_name = calc_class_name
+            
+            if calc_class_name == "SPANMarginCalculator":
+                calc_display_name = "SPAN"
+            elif calc_class_name == "OptionMarginCalculator":
+                calc_display_name = "Option"
+            elif calc_class_name == "MarginCalculator":
+                calc_display_name = "Basic"
+                
+            self.logger.info(f"  Portfolio margin calculator type: {calc_display_name}")
+            
         self.logger.info(f"  Rebalancer has margin calculator: {self.margin_calculator is not None}")
+        
         if self.margin_calculator:
-            self.logger.info(f"  Rebalancer margin calculator type: {type(self.margin_calculator).__name__}")
+            # Get user-friendly calculator type name for rebalancer's calculator
+            calc_class_name = type(self.margin_calculator).__name__
+            calc_display_name = calc_class_name
+            
+            if calc_class_name == "SPANMarginCalculator":
+                calc_display_name = "SPAN"
+            elif calc_class_name == "OptionMarginCalculator":
+                calc_display_name = "Option"
+            elif calc_class_name == "MarginCalculator":
+                calc_display_name = "Basic"
+                
+            self.logger.info(f"  Rebalancer margin calculator type: {calc_display_name}")
         
         # SIMPLE APPROACH: Use position_data's margin_per_contract for margin calculation
         # This will be more reliable than using portfolio's margin calculator which may have issues

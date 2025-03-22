@@ -54,11 +54,11 @@ portfolio:
   
   # Maximum size for any single position as percentage of portfolio
   # 0.05 = No position can exceed 5% of portfolio value
-  max_position_size_pct: 0.05
+  max_position_size_pct: 0.25
   
   # Maximum delta exposure as percentage of portfolio value
   # 0.50 = Total delta cannot exceed 50% of portfolio value
-  max_portfolio_delta: 0.50
+  max_portfolio_delta: 3
 
 ################################################################################
 # HEDGING CONFIGURATION
@@ -76,18 +76,18 @@ hedging:
   
   # Target delta ratio as percentage of NLV (Net Liquidation Value)
   # 0.05 = Target delta exposure of 5% of portfolio value
-  target_delta_ratio: 0.05
+  target_delta_ratio: 0.1
   
   # Acceptable deviation from target delta before hedge adjustment
   # 0.1 = Allow delta to drift 10% before rebalancing
-  delta_tolerance: 0.1
+  delta_tolerance: 0.3
   
   # Symbol to use for hedging (typically the underlying index/ETF)
   hedge_symbol: "SPY"
   
   # Maximum hedge ratio allowed (limits extreme hedging positions)
   # 1.5 = Hedge position cannot exceed 1.5x the portfolio delta exposure
-  max_hedge_ratio: 1.5
+  max_hedge_ratio: 3
 
 ################################################################################
 # RISK MANAGEMENT CONFIGURATION
@@ -127,7 +127,7 @@ risk:
 ################################################################################
 strategy:
   # Name of the strategy to run
-  name: "ThetaDecayStrategy"
+  name: "PutSellStrat"
   
   # Minimum days to expiration for new positions
   days_to_expiry_min: 60
@@ -140,6 +140,41 @@ strategy:
   
   # Target delta value for option selection
   # -0.2 = Sell options with approximately 20 delta
+  delta_target: -0.2
+  
+  # Acceptable deviation from target delta when selecting options
+  delta_tolerance: 0.01
+  
+  # Profit target as percentage of max profit (0.65 = exit at 65% of max profit)
+  profit_target: 0.65
+  
+  # Multiple of credit received before triggering stop loss
+  # 2.5 = Close position if loss reaches 2.5x the credit received
+  stop_loss_threshold: 2.5
+  
+  # Days to expiration threshold for closing positions
+  # 14 = Close positions when they reach 14 days to expiry
+  close_days_to_expiry: 14
+  
+  # Minimum size for new positions (in contracts)
+  min_position_size: 1
+
+################################################################################
+# CALL-PUT STRATEGY CONFIGURATION
+# Parameters specific to the call and put selling strategy
+################################################################################
+callputstrat:
+  # Minimum days to expiration for new positions
+  days_to_expiry_min: 60
+  
+  # Maximum days to expiration for new positions
+  days_to_expiry_max: 90
+  
+  # Whether to sell options (true) or buy options (false)
+  is_short: true
+  
+  # Target delta value for put option selection
+  # -0.2 = Sell put options with approximately 20 delta
   delta_target: -0.2
   
   # Acceptable deviation from target delta when selecting options
@@ -302,10 +337,10 @@ data:
 
 ################################################################################
 # LOGGING CONFIGURATION
-# Parameters controlling system logging behavior
+# Parameters controlling system and component logging behavior
 ################################################################################
 logging:
-  # Log level (DEBUG, INFO, WARNING, ERROR, CRITICAL)
+  # Global log level (DEBUG, INFO, WARNING, ERROR, CRITICAL)
   level: "INFO"
   
   # Format for log messages
@@ -316,3 +351,25 @@ logging:
   
   # Whether to write logs to file
   file: true
+  
+  # Component-specific logging settings
+  components:
+    # Margin calculation logging
+    margin:
+      # Log verbosity level for margin calculations
+      # Available levels: "minimal", "standard", "verbose", "debug"
+      # - minimal: Only show critical information like final margin values
+      # - standard: Show position-level margin calculations (default)
+      # - verbose: Show detailed calculation steps and formulas
+      # - debug: Show all internal details including intermediate values
+      level: "debug"
+      
+    # Portfolio operations logging
+    portfolio:
+      # Log verbosity level for portfolio operations
+      # Available levels: "minimal", "standard", "verbose", "debug"
+      # - minimal: Only show critical updates like portfolio value changes
+      # - standard: Show position-level updates (default)
+      # - verbose: Show detailed transaction steps and calculations
+      # - debug: Show all internal details including P&L tracking
+      level: "standard"

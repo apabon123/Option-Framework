@@ -14,7 +14,8 @@ import logging
 from datetime import datetime
 import importlib
 
-from core.trading_engine import TradingEngine, Strategy, LoggingManager
+from core.trading_engine import TradingEngine, Strategy
+from simple_logging import SimpleLoggingManager
 
 
 def load_yaml_config(config_path):
@@ -46,6 +47,32 @@ def get_strategy_class(strategy_name):
             from strategies.example_strategy import SimpleOptionStrategy
             return SimpleOptionStrategy
 
+        # Add specific handling for PutSellStrat
+        if strategy_name == "PutSellStrat":
+            try:
+                print(f"Attempting to import PutSellStrat from strategies.put_sell_strat")
+                from strategies.put_sell_strat import PutSellStrat
+                print(f"Successfully imported PutSellStrat")
+                return PutSellStrat
+            except Exception as e:
+                print(f"Error importing PutSellStrat: {e}")
+                import traceback
+                print(traceback.format_exc())
+                raise
+                
+        # Add specific handling for CallPutStrat
+        if strategy_name == "CallPutStrat":
+            try:
+                print(f"Attempting to import CallPutStrat from strategies.call_put_strat")
+                from strategies.call_put_strat import CallPutStrat
+                print(f"Successfully imported CallPutStrat")
+                return CallPutStrat
+            except Exception as e:
+                print(f"Error importing CallPutStrat: {e}")
+                import traceback
+                print(traceback.format_exc())
+                raise
+                
         # Add specific handling for ThetaDecayStrategy
         if strategy_name == "ThetaDecayStrategy":
             try:
@@ -112,6 +139,27 @@ def parse_args():
     )
 
     parser.add_argument(
+        "--log-level",
+        choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
+        default=None,
+        help="Set the logging level (overrides config file)"
+    )
+    
+    parser.add_argument(
+        "--margin-log-level",
+        choices=["minimal", "standard", "verbose", "debug"],
+        default=None,
+        help="Set the verbosity level for margin calculations"
+    )
+
+    parser.add_argument(
+        "--portfolio-log-level",
+        choices=["minimal", "standard", "verbose", "debug"],
+        default=None,
+        help="Set the verbosity level for portfolio operations"
+    )
+
+    parser.add_argument(
         "--start-date",
         help="Override start date (YYYY-MM-DD)"
     )
@@ -125,7 +173,7 @@ def parse_args():
 
 
 def main():
-    """Main function to run the trading system."""
+    """Main entry point for the application."""
     print("\n=== Starting Option Framework ===")
     args = parse_args()
     print(f"Using config file: {args.config}")
@@ -155,13 +203,65 @@ def main():
 
         # Configure logging
         print("Setting up logging...")
-        logging_manager = LoggingManager()
-        logger = logging_manager.setup_logging(
-            config,
-            verbose_console=args.verbose,
-            debug_mode=args.debug,
-            clean_format=not args.debug
-        )
+        logging_manager = SimpleLoggingManager()
+        
+        # Override log level if specified in command line
+        if args.log_level:
+            if 'logging' not in config:
+                config['logging'] = {}
+            config['logging']['level'] = args.log_level
+            print(f"Log level override: {args.log_level}")
+            
+        # Override margin log level if specified in command line
+        if args.margin_log_level:
+            # First, update the new structure
+            if 'logging' not in config:
+                config['logging'] = {}
+            if 'components' not in config['logging']:
+                config['logging']['components'] = {}
+            if 'margin' not in config['logging']['components']:
+                config['logging']['components']['margin'] = {}
+            config['logging']['components']['margin']['level'] = args.margin_log_level
+            
+            # Also update the old structure for backward compatibility
+            if 'margin' not in config:
+                config['margin'] = {}
+            if 'logging' not in config['margin']:
+                config['margin']['logging'] = {}
+            config['margin']['logging']['level'] = args.margin_log_level
+            print(f"Margin log level override: {args.margin_log_level}")
+            
+        # Override portfolio log level if specified in command line
+        if args.portfolio_log_level:
+            # First, update the new structure
+            if 'logging' not in config:
+                config['logging'] = {}
+            if 'components' not in config['logging']:
+                config['logging']['components'] = {}
+            if 'portfolio' not in config['logging']['components']:
+                config['logging']['components']['portfolio'] = {}
+            config['logging']['components']['portfolio']['level'] = args.portfolio_log_level
+            
+            # Also update the old structure for backward compatibility
+            if 'portfolio' not in config:
+                config['portfolio'] = {}
+            if 'logging' not in config['portfolio']:
+                config['portfolio']['logging'] = {}
+            config['portfolio']['logging']['level'] = args.portfolio_log_level
+            print(f"Portfolio log level override: {args.portfolio_log_level}")
+        
+        try:
+            logger = logging_manager.setup_logging(
+                config,
+                verbose_console=args.verbose,
+                debug_mode=args.debug,
+                clean_format=not args.debug
+            )
+        except Exception as e:
+            import traceback
+            print(f"ERROR in setup_logging: {e}")
+            print(traceback.format_exc())
+            return 1
 
         # Get strategy class and create instance
         strategy_name = config.get('strategy', {}).get('name')
@@ -175,8 +275,10 @@ def main():
         try:
             strategy_class = get_strategy_class(strategy_name)
             strategy = strategy_class(config.get('strategy', {}), logger)
-        except ImportError as e:
-            logger.error(f"Error loading strategy: {e}")
+        except Exception as e:
+            import traceback
+            print(f"ERROR loading strategy: {e}")
+            print(traceback.format_exc())
             return 1
 
         # Create trading engine
@@ -184,9 +286,9 @@ def main():
             print("Creating trading engine...")
             engine = TradingEngine(config, strategy)
         except Exception as e:
-            logger.error(f"Error creating trading engine: {e}")
             import traceback
-            logger.error(traceback.format_exc())
+            print(f"ERROR creating trading engine: {e}")
+            print(traceback.format_exc())
             return 1
 
         # Load data

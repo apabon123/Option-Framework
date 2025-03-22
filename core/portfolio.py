@@ -80,7 +80,17 @@ class Portfolio:
         self.logger.info(f"  Max position size: {max_position_size_pct:.1%} of portfolio")
         self.logger.info(f"  Max portfolio delta: {max_portfolio_delta:.1%} of portfolio value")
         if self.margin_calculator:
-            self.logger.info(f"  Using margin calculator: {type(self.margin_calculator).__name__}")
+            # Get a user-friendly name for the margin calculator
+            calculator_class_name = type(self.margin_calculator).__name__
+            calculator_display_name = calculator_class_name
+            if calculator_class_name == "SPANMarginCalculator":
+                calculator_display_name = "SPAN"
+            elif calculator_class_name == "OptionMarginCalculator":
+                calculator_display_name = "Option"
+            elif calculator_class_name == "MarginCalculator":
+                calculator_display_name = "Basic"
+            
+            self.logger.info(f"  Using margin calculator: {calculator_display_name}")
     
     def set_margin_calculator(self, margin_calculator):
         """
@@ -90,7 +100,18 @@ class Portfolio:
             margin_calculator: Margin calculator instance
         """
         self.margin_calculator = margin_calculator
-        self.logger.info(f"Portfolio margin calculator set to: {type(margin_calculator).__name__}")
+        
+        # Get a user-friendly name for the margin calculator
+        calculator_class_name = type(margin_calculator).__name__
+        calculator_display_name = calculator_class_name
+        if calculator_class_name == "SPANMarginCalculator":
+            calculator_display_name = "SPAN"
+        elif calculator_class_name == "OptionMarginCalculator":
+            calculator_display_name = "Option"
+        elif calculator_class_name == "MarginCalculator":
+            calculator_display_name = "Basic"
+            
+        self.logger.info(f"Portfolio margin calculator set to: {calculator_display_name}")
     
     # Add dictionary-like access methods for easier reporting
     def keys(self):
@@ -504,8 +525,18 @@ class Portfolio:
         # Log margin calculation approach
         if hasattr(self, 'logger'):
             if self.margin_calculator:
-                calc_type = type(self.margin_calculator).__name__
-                self.logger.debug(f"[Portfolio] Using {calc_type} for margin calculation")
+                # Get user-friendly calculator type name
+                calc_class_name = type(self.margin_calculator).__name__
+                calc_display_name = calc_class_name
+                
+                if calc_class_name == "SPANMarginCalculator":
+                    calc_display_name = "SPAN"
+                elif calc_class_name == "OptionMarginCalculator":
+                    calc_display_name = "Option"
+                elif calc_class_name == "MarginCalculator":
+                    calc_display_name = "Basic"
+                    
+                self.logger.debug(f"[Portfolio] Using {calc_display_name} for margin calculation")
             else:
                 self.logger.debug("[Portfolio] No margin calculator set, using position-level calculation")
         
@@ -521,7 +552,18 @@ class Portfolio:
                 hedging_benefits = margin_result.get('hedging_benefits', 0)
                 
                 if hasattr(self, 'logger'):
-                    self.logger.debug(f"[Portfolio] Portfolio margin calculation using {type(self.margin_calculator).__name__}:")
+                    # Get user-friendly calculator type name
+                    calc_class_name = type(self.margin_calculator).__name__
+                    calc_display_name = calc_class_name
+                    
+                    if calc_class_name == "SPANMarginCalculator":
+                        calc_display_name = "SPAN"
+                    elif calc_class_name == "OptionMarginCalculator":
+                        calc_display_name = "Option"
+                    elif calc_class_name == "MarginCalculator":
+                        calc_display_name = "Basic"
+                        
+                    self.logger.debug(f"[Portfolio] Portfolio margin calculation using {calc_display_name}:")
                     self.logger.debug(f"  Total margin: ${total_margin:.2f}")
                     self.logger.debug(f"  Hedging benefits: ${hedging_benefits:.2f}")
                     

@@ -338,8 +338,8 @@ class RiskManager:
             
             # Log detailed margin breakdown
             self.logger.warning(f"Hedge value: ${hedge_value:.2f}, Standard hedge margin (25%): ${hedge_margin:.2f}")
-            self.logger.warning(f"Margin per contract (UNHEDGED SPAN): ${margin_per_contract:.2f}")
-            self.logger.warning(f"Margin per contract (HEDGED SPAN): ${combined_margin_per_contract:.2f}")
+            self.logger.warning(f"Margin per contract (STANDALONE): ${margin_per_contract:.2f}")
+            self.logger.warning(f"Margin per contract (WITH HEDGING): ${combined_margin_per_contract:.2f}")
             
             # For position sizing, use the hedged margin
             margin_per_contract = combined_margin_per_contract
@@ -393,7 +393,7 @@ class RiskManager:
 
         # Enhanced logging including the max_nlv_percent constraint
         self.logger.info(f"[Position Sizing] Option: {option_symbol}")
-        self.logger.info(f"  Price: ${option_price:.2f}, Margin per contract: ${margin_per_contract:.2f} (unhedged)")
+        self.logger.info(f"  Price: ${option_price:.2f}, Margin per contract: ${margin_per_contract:.2f} (hedged)")
         
         # Estimate hedge requirements and margin impact
         # For short calls, delta is typically positive

@@ -18,9 +18,10 @@ import sys
 from tabulate import tabulate
 import re
 import math
+import time
 
 # Handle imports properly whether run as script or imported as module
-if __name__ == "__main__" or os.path.basename(sys.argv[0]) == "trading_engine.py":
+if __name__ == "__main__":
     # When run as a script, use absolute imports
     from core.data_manager import DataManager
     from core.position import Position, OptionPosition
@@ -56,6 +57,7 @@ class LoggingManager:
         self.log_file = None
         self.original_stdout = None
         self.original_stderr = None
+        self.component_log_levels = {}
         
     def log_section_header(self, title: str, date: Optional[datetime] = None) -> None:
         """
@@ -157,12 +159,50 @@ class LoggingManager:
         Returns:
             logging.Logger: Configured logger
         """
-        # Set debug_mode to True to see debug logs
-        debug_mode = True
+        # Get log level from config
+        log_level_str = config_dict.get('logging', {}).get('level', 'INFO')
+        log_levels = {
+            'DEBUG': logging.DEBUG,
+            'INFO': logging.INFO,
+            'WARNING': logging.WARNING,
+            'ERROR': logging.ERROR,
+            'CRITICAL': logging.CRITICAL
+        }
+        # Use DEBUG if debug_mode is True, otherwise use the configured level
+        log_level = logging.DEBUG if debug_mode else log_levels.get(log_level_str, logging.INFO)
+        
+        # Set up component-specific log levels
+        self.component_log_levels = {}
+        
+        # Check for component-specific logging settings in the new structure
+        if 'logging' in config_dict and 'components' in config_dict['logging']:
+            # Check for margin logging settings
+            if 'margin' in config_dict['logging']['components']:
+                level = config_dict['logging']['components']['margin'].get('level', 'standard')
+                self.component_log_levels['margin'] = str(level) if level is not None else 'standard'
+                
+            # Check for portfolio logging settings
+            if 'portfolio' in config_dict['logging']['components']:
+                level = config_dict['logging']['components']['portfolio'].get('level', 'standard')
+                self.component_log_levels['portfolio'] = str(level) if level is not None else 'standard'
+        else:
+            # Fallback to the old structure for backward compatibility
+            # Check for margin logging settings
+            if 'margin' in config_dict and 'logging' in config_dict['margin']:
+                level = config_dict['margin']['logging'].get('level', 'standard')
+                self.component_log_levels['margin'] = str(level) if level is not None else 'standard'
+                
+            # Check for portfolio logging settings
+            if 'portfolio' in config_dict and 'logging' in config_dict['portfolio']:
+                level = config_dict['portfolio']['logging'].get('level', 'standard')
+                self.component_log_levels['portfolio'] = str(level) if level is not None else 'standard'
+        
+        # Print the component log levels for debugging
+        print(f"Component log levels after setup: {self.component_log_levels}")
         
         # Create logger
         logger = logging.getLogger('trading_engine')
-        logger.setLevel(logging.DEBUG if debug_mode else logging.INFO)
+        logger.setLevel(log_level)
         
         # Clear any existing handlers
         for hdlr in logger.handlers:
@@ -181,23 +221,23 @@ class LoggingManager:
         
         # Create file handler
         fh = logging.FileHandler(log_file)
-        fh.setLevel(logging.DEBUG)  # Always log everything to file
+        fh.setLevel(log_level)  # Use the same level for file
 
         if clean_format:
             # Use a clean format without timestamps and log levels
             file_formatter = logging.Formatter('%(message)s')
         else:
-            # Use standard format with timestamps and log levels
+            # Use a standard format with timestamps and log levels
             file_formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
-
+            
         fh.setFormatter(file_formatter)
         logger.addHandler(fh)
-
-        # Console handler - now with color formatting
-        console_handler = logging.StreamHandler(sys.stdout)
-        console_handler.setLevel(logging.INFO)
         
-        # Create a colored formatter for more visible console output
+        # Create console handler for verbose output
+        console_handler = logging.StreamHandler()
+        console_handler.setLevel(log_level)
+        
+        # Create custom formatter for console output
         class ColoredFormatter(logging.Formatter):
             """Custom formatter with colored output for console."""
             
@@ -207,7 +247,7 @@ class LoggingManager:
                 'DEBUG': '\033[94m',    # Blue
                 'CRITICAL': '\033[91m', # Red
                 'ERROR': '\033[91m',    # Red
-                'ENDC': '\033[0m',      # Reset
+                'ENDC': '\033[0m',      # End color
                 'BOLD': '\033[1m',      # Bold
                 'UNDERLINE': '\033[4m'  # Underline
             }
@@ -254,6 +294,9 @@ class LoggingManager:
         # Store logger for later use
         self.logger = logger
         
+        # Set the manager attribute on the logger so MarginCalculator can use it
+        setattr(logger, 'manager', self)
+        
         return logger
         
     def build_log_filename(self, config_dict: Dict[str, Any]) -> str:
@@ -295,6 +338,53 @@ class LoggingManager:
             sys.stdout = self.original_stdout
         if self.original_stderr:
             sys.stderr = self.original_stderr
+
+    def get_component_log_level(self, component_name: str) -> str:
+        """
+        Get the log level for a specific component.
+        
+        Args:
+            component_name: Name of the component (e.g., 'margin', 'portfolio')
+            
+        Returns:
+            str: Log level for the component
+        """
+        if component_name in self.component_log_levels:
+            # Make sure we're returning a string
+            level = self.component_log_levels[component_name]
+            if isinstance(level, str):
+                return level
+            # Try to convert to string if it's not already
+            try:
+                return str(level)
+            except:
+                return "standard"  # Default if conversion fails
+                
+        # Default to standard level
+        return "standard"
+    
+    def should_log(self, *args, **kwargs):
+        """
+        Simplified should_log method that always returns True to avoid comparison errors.
+        """
+        # This is a temporary workaround - always allow logging
+        return True
+
+    def disable(self):
+        """
+        Disable logging.
+        This method is added for compatibility with code expecting a disable method.
+        """
+        if self.logger:
+            self.logger.disabled = True
+
+    def _clear_cache(self):
+        """
+        Clear any internal caches.
+        This method is added for compatibility with code expecting a _clear_cache method.
+        """
+        # Currently no cache to clear, but included for compatibility
+        pass
 
 
 class Strategy:
@@ -366,93 +456,109 @@ class Strategy:
 
 class TradingEngine:
     """
-    Core trading engine for backtesting and executing trading strategies.
+    Core trading engine for backtesting and simulation.
     
-    This class orchestrates the entire trading process, including:
-    - Loading and preprocessing data
-    - Instantiating and configuring the strategy
-    - Managing the portfolio
-    - Calculating risk metrics
-    - Processing daily trading activities
-    - Tracking and reporting performance
+    This class orchestrates the components of a trading system:
+    - Data Management: Loading and preprocessing price data
+    - Portfolio Management: Tracking positions and calculating performance
+    - Strategy: Generating signals and trade ideas
+    - Execution: Simulating order fills and tracking trades
+    - Reporting: Generating performance reports and visualizations
     """
     
-    def __init__(self, config_dict: Dict[str, Any], strategy: Optional[Strategy] = None):
+    def __init__(self, config: Dict[str, Any], strategy: Strategy = None, logger: Optional[logging.Logger] = None):
         """
         Initialize the trading engine.
         
         Args:
-            config_dict: Configuration dictionary
-            strategy: Optional strategy instance (if None, will be created from config)
+            config: Configuration dictionary
+            strategy: Trading strategy instance (optional)
+            logger: Logger instance (optional)
         """
-        # Set up logging first
-        self.logging_manager = LoggingManager()
-        self.logger = self.logging_manager.setup_logging(
-            config_dict,
-            verbose_console=True,  # Set to True to show all logs
-            debug_mode=True,  # Set to True to enable debug logging
-            clean_format=True
-        )
+        # Store config
+        self.config = config
         
-        # Store configuration
-        self.config = config_dict
-        self.logger.debug(f"Configuration: {self.config}")
+        # Set up logging
+        self.logger = logger or logging.getLogger('trading_engine')
+        self.logging_manager = None
+        # No need to call _setup_logging here as we're getting the logger as a parameter
         
-        # Initialize components
-        self.data_manager = DataManager(self.config, self.logger)
-        self.logger.debug(f"DataManager initialized with config: {self.config.get('paths', {})}")
+        # Store the provided strategy instance
+        self._strategy_instance = strategy
         
-        # Create the portfolio
-        portfolio_config = self.config.get('portfolio', {})
-        initial_capital = portfolio_config.get('initial_capital', 100000)
-        max_position_size_pct = portfolio_config.get('max_position_size_pct', 0.25)
-        max_portfolio_delta = portfolio_config.get('max_portfolio_delta', 0.20)
-        
-        self.portfolio = Portfolio(
-            initial_capital=initial_capital,
-            max_position_size_pct=max_position_size_pct,
-            max_portfolio_delta=max_portfolio_delta,
-            logger=self.logger
-        )
-        self.logger.debug(f"Portfolio initialized with capital: {initial_capital}")
-        
-        # Initialize the hedging manager
-        hedging_config = self.config.get('hedging', {})
-        self.hedging_manager = HedgingManager(
-            portfolio=self.portfolio,
-            config=hedging_config,
-            logger=self.logger
-        )
-        self.logger.debug("Hedging manager initialized")
-        
-        # Initialize the margin management with portfolio rebalancer
-        self.margin_manager = PortfolioRebalancer(
-            portfolio=self.portfolio,
-            config=self.config,
-            logger=self.logger
-        )
-        self.logger.debug("Margin manager initialized")
-        
-        # Initialize other components later
-        self.data = None  # Will hold the processed data
-        self.reporting_system = None
+        # Initialize components to None (will be set in init_components)
+        self.data_manager = None
+        self.position_manager = None
+        self.portfolio = None
         self.risk_manager = None
+        self.margin_calculator = None
+        self.margin_manager = None
+        self.reporting_system = None
+        self.strategy = None  # Will be initialized in _init_components
         
-        # If strategy is provided, use it; otherwise create from config
-        self.strategy = strategy
-        if self.strategy is None:
-            self.strategy = self._create_strategy()
-            
-        # Performance metrics
+        # Initialize state variables
+        self.data = None
+        self.trade_history = []
+        self.performance_history = []
+        
+        # Setup initial default params
+        self.dates_trading = []
+        self.start_date = None
+        self.end_date = None
+        self.current_date = None
+        self.days_processed = 0  # Track number of days processed
+        
+        # Initialize tracking metrics
         self.metrics_history = []
         
-        # Counter for processed days
-        self.days_processed = 0
+        # Import SimpleLoggingManager for consistency across the application
+        from simple_logging import SimpleLoggingManager
         
-        # Current date being processed
+        # Initialize the logging manager and logger
+        self.logging_manager = SimpleLoggingManager()
+        self.logger = self.logging_manager.setup_logging(
+            self.config,
+            verbose_console=True,
+            debug_mode=self.config.get('debug_mode', False)
+        )
+        
+        # Extract main configuration parameters
+        self.initial_capital = self.config.get('portfolio', {}).get('initial_capital', 100000)
+        self.max_leverage = self.config.get('portfolio', {}).get('max_leverage', 1.0)
+        
+        # Initialize current date and other date-related fields
+        self.start_date = self._parse_date(self.config.get('dates', {}).get('start_date'))
+        self.end_date = self._parse_date(self.config.get('dates', {}).get('end_date'))
         self.current_date = None
         
-        # Initialize components
+        # Initialize containers for data
+        self.strategy = None  # Will be initialized in _init_components
+        self.margin_calculator = None  # Will be initialized in _init_components
+        self.reporting_system = None  # Will be initialized in _init_components
+        self.hedging_manager = None  # Will be set up if hedging is enabled
+        
+        # Tracking variables
+        self.performance_metrics = {
+            'daily_returns': [],
+            'equity_curve': [],
+            'max_drawdown': 0.0,
+            'sharpe_ratio': 0.0,
+            'sortino_ratio': 0.0,
+            'total_return': 0.0,
+            'annualized_return': 0.0,
+            'volatility': 0.0,
+            'win_rate': 0.0,
+            'profit_factor': 0.0,
+            'risk_metrics': {}
+        }
+        
+        # Store starting time for performance tracking
+        self.start_time = time.time()
+        
+        # Store original date format from config for consistency
+        self.date_format = self.config.get('date_format', '%Y-%m-%d')
+        
+        # Initialize components (portfolio, risk manager, etc.)
         self._init_components()
         
     def _init_components(self) -> None:
@@ -461,6 +567,13 @@ class TradingEngine:
         portfolio_config = self.config.get('portfolio', {})
         max_position_size = portfolio_config.get('max_position_size_pct', 0.05)
         
+        # Create portfolio first
+        self.portfolio = Portfolio(
+            initial_capital=self.initial_capital,
+            logger=self.logger
+        )
+        self.logger.info(f"Portfolio initialized with ${self.initial_capital:,.2f} capital")
+        
         # Create risk manager
         self.risk_manager = RiskManager(
             config=self.config,
@@ -468,20 +581,60 @@ class TradingEngine:
         )
         self.logger.info(f"Risk manager initialized with max position size: {max_position_size:.2%}")
         
+        # Create strategy
+        self.strategy = self._create_strategy()
+        
+        # Create data manager
+        self.data_manager = DataManager(
+            config=self.config,
+            logger=self.logger
+        )
+        
         # Create margin calculator
-        margin_config = self.config.get('margin', {})
-        margin_type = margin_config.get('type', 'option')
+        # First check margin_management config, then fall back to margin config
+        margin_config = self.config.get('margin_management', self.config.get('margin', {}))
+        margin_type = margin_config.get('margin_calculator_type', 'standard')
+        
+        # Log which margin calculator type we're using
+        self.logger.info(f"Using margin calculator type: {margin_type}")
         
         if margin_type == 'option':
-            self.margin_calculator = OptionMarginCalculator(self.logger)
+            self.logger.info("[INIT] Using OptionMarginCalculator")
+            self.margin_calculator = OptionMarginCalculator(logger=self.logger)
+            # Set logging manager separately
+            self.margin_calculator.logging_manager = self.logging_manager
         elif margin_type == 'span':
-            self.margin_calculator = SPANMarginCalculator(self.logger)
+            self.logger.info("[INIT] Using SPANMarginCalculator")
+            # Load SPAN parameters if provided in config
+            span_params = {}
+            if 'span_parameters' in self.config.get('margin', {}):
+                span_params = self.config.get('margin', {}).get('span_parameters', {})
+                
+            self.margin_calculator = SPANMarginCalculator(
+                logger=self.logger,
+                params=span_params
+            )
+            # Set logging manager separately
+            self.margin_calculator.logging_manager = self.logging_manager
         else:
-            self.margin_calculator = MarginCalculator(self.logger)
-            
-        # Set the margin calculator in the portfolio
-        if hasattr(self.portfolio, 'set_margin_calculator'):
-            self.portfolio.set_margin_calculator(self.margin_calculator)
+            self.logger.info("[INIT] Using standard MarginCalculator")
+            self.margin_calculator = MarginCalculator(logger=self.logger)  # Pass the logger instance
+            # Set logging manager separately
+            self.margin_calculator.logging_manager = self.logging_manager
+        
+        # Connect margin calculator to portfolio (now portfolio is guaranteed to exist)
+        self.portfolio.set_margin_calculator(self.margin_calculator)
+        
+        # Import and use the real margin manager from margin_management module
+        from core.margin_management import PortfolioRebalancer
+        
+        # Create and configure the real margin manager
+        self.logger.info("[INIT] Creating PortfolioRebalancer for margin management")
+        self.margin_manager = PortfolioRebalancer(
+            portfolio=self.portfolio,
+            config=self.config,
+            logger=self.logger
+        )
         
         # Create reporting system
         self.reporting_system = ReportingSystem(
@@ -496,12 +649,14 @@ class TradingEngine:
         Returns:
             Strategy: Configured strategy instance
         """
+        # If a strategy instance was provided in the constructor, use that
+        if self._strategy_instance is not None:
+            return self._strategy_instance
+        
+        # Otherwise, fall back to creating a base Strategy (which will warn that it should be overridden)
         strategy_config = self.config.get('strategy', {})
         strategy_name = strategy_config.get('name', 'DefaultStrategy')
-        strategy_type = strategy_config.get('type', 'DefaultStrategy')
-        
-        # Placeholder - in a real implementation, would dynamically load the strategy class
-        # For now, just return a base Strategy instance
+        self.logger.warning(f"No strategy instance provided - creating base Strategy ({strategy_name})")
         return Strategy(name=strategy_name, config=strategy_config, logger=self.logger)
         
     def load_data(self) -> bool:
@@ -767,8 +922,8 @@ class TradingEngine:
         # Log open positions
         self._log_open_positions()
         
-        # Log margin details
-        self._log_margin_details()
+        # Log margin details - This is the first time we calculate margin in this cycle
+        self._log_margin_details(detailed=True, reuse_existing_metrics=False)
         
         # Log portfolio Greek risk
         self._log_portfolio_greek_risk()
@@ -930,14 +1085,21 @@ class TradingEngine:
         if zero_contract_positions:
             self.logger.debug(f"Skipped {len(zero_contract_positions)} positions with 0 contracts: {', '.join(zero_contract_positions)}")
         
-    def _log_margin_details(self, detailed=True):
+    def _log_margin_details(self, detailed=True, reuse_existing_metrics=False):
         """
         Log margin details.
         
         Args:
             detailed: Whether to show detailed margin information
+            reuse_existing_metrics: If True, reuse existing portfolio metrics instead of recalculating
         """
-        portfolio_metrics = self.portfolio.get_portfolio_metrics()
+        if reuse_existing_metrics and hasattr(self, '_cached_portfolio_metrics') and self._cached_portfolio_metrics:
+            portfolio_metrics = self._cached_portfolio_metrics
+            self.logger.debug("Reusing cached portfolio metrics for margin details")
+        else:
+            portfolio_metrics = self.portfolio.get_portfolio_metrics()
+            # Cache the metrics for potential reuse
+            self._cached_portfolio_metrics = portfolio_metrics
         
         # Get margin values
         total_margin = portfolio_metrics.get('total_margin', 0)
@@ -951,7 +1113,19 @@ class TradingEngine:
         # Determine and log which margin calculator is being used
         margin_calculator_type = "Unknown"
         if hasattr(self.portfolio, 'margin_calculator') and self.portfolio.margin_calculator:
-            margin_calculator_type = type(self.portfolio.margin_calculator).__name__
+            # Get the actual class name
+            calculator_class_name = type(self.portfolio.margin_calculator).__name__
+            
+            # Map the class name to a more user-friendly display name
+            if calculator_class_name == "SPANMarginCalculator":
+                margin_calculator_type = "SPAN"
+            elif calculator_class_name == "OptionMarginCalculator":
+                margin_calculator_type = "Option"
+            elif calculator_class_name == "MarginCalculator":
+                margin_calculator_type = "Basic"
+            else:
+                margin_calculator_type = calculator_class_name
+                
             self.logger.info(f"  Margin Calculator Type: {margin_calculator_type}")
         else:
             self.logger.info("  Margin Calculator: Not Set (Using position level calculation)")
@@ -1005,35 +1179,16 @@ class TradingEngine:
         
         # If detailed, show margin breakdown by position
         if detailed:
-            # Get margin by position if available in portfolio metrics
-            margin_by_position = {}
+            # Get margin by position and hedging benefits from portfolio metrics
+            margin_by_position = portfolio_metrics.get('margin_by_position', {})
+            hedging_benefits = portfolio_metrics.get('hedging_benefits', 0)
             
-            # Calculate using portfolio's margin calculator if available
-            if hasattr(self.portfolio, 'margin_calculator') and self.portfolio.margin_calculator:
-                try:
-                    # Calculate portfolio margin with the portfolio's calculator
-                    margin_result = self.portfolio.margin_calculator.calculate_portfolio_margin(self.portfolio.positions)
-                    margin_by_position = margin_result.get('margin_by_position', {})
-                    hedging_benefits = margin_result.get('hedging_benefits', 0)
-                    
-                    # Log the total hedging benefits
-                    if hedging_benefits > 0:
-                        self.logger.info(f"  Hedging Benefits: ${hedging_benefits:,.2f}")
-                        self.logger.info(f"  Standalone Sum of Margins: ${(total_margin + hedging_benefits):,.2f}")
-                        hedge_reduction_pct = (hedging_benefits / (total_margin + hedging_benefits) * 100) if (total_margin + hedging_benefits) > 0 else 0
-                        self.logger.info(f"  Hedge Reduction: {hedge_reduction_pct:.2f}% of margin")
-                    
-                except Exception as e:
-                    self.logger.error(f"Error calculating portfolio margin: {e}")
-                    # Fall back to individual position calculation
-                    for symbol, position in self.portfolio.positions.items():
-                        if hasattr(position, 'calculate_margin_requirement'):
-                            margin_by_position[symbol] = position.calculate_margin_requirement(1.0)
-            else:
-                # Fall back to individual position calculation
-                for symbol, position in self.portfolio.positions.items():
-                    if hasattr(position, 'calculate_margin_requirement'):
-                        margin_by_position[symbol] = position.calculate_margin_requirement(1.0)
+            # Log the total hedging benefits
+            if hedging_benefits > 0:
+                self.logger.info(f"  Hedging Benefits: ${hedging_benefits:,.2f}")
+                self.logger.info(f"  Standalone Sum of Margins: ${(total_margin + hedging_benefits):,.2f}")
+                hedge_reduction_pct = (hedging_benefits / (total_margin + hedging_benefits) * 100) if (total_margin + hedging_benefits) > 0 else 0
+                self.logger.info(f"  Hedge Reduction: {hedge_reduction_pct:.2f}% of margin")
             
             # Show margin breakdown by position
             if margin_by_position:
@@ -1078,11 +1233,10 @@ class TradingEngine:
         self.logger.info("==================================================")
         self.logger.info(f"POST-TRADE SUMMARY - {current_date.strftime('%Y-%m-%d')}:")
         
-        # Calculate portfolio value
+        # Get and update portfolio value
         portfolio_value = self.portfolio.get_portfolio_value()
-        self.logger.info(f"Portfolio Value: ${portfolio_value:.2f}")
         
-        # Calculate and log P&L if we have a previous portfolio value
+        # Calculate daily P&L if we have a previous portfolio value
         if hasattr(self, 'previous_portfolio_value') and self.previous_portfolio_value is not None:
             daily_pnl = portfolio_value - self.previous_portfolio_value
             daily_pnl_percent = (daily_pnl / self.previous_portfolio_value) * 100 if self.previous_portfolio_value > 0 else 0
@@ -1090,63 +1244,235 @@ class TradingEngine:
             # Initialize P&L components
             option_pnl = 0
             equity_pnl = 0
-            realized_pnl_today = 0
             
-            # Track realized P&L from today's closed positions
-            if hasattr(self.portfolio, 'today_realized_pnl'):
-                realized_pnl_today = self.portfolio.today_realized_pnl
-                self.logger.debug(f"Debug - Today's realized P&L: ${realized_pnl_today:.2f}")
-
             # Calculate P&L breakdown by position type
             for symbol, position in self.portfolio.positions.items():
-                self.logger.debug(f"Debug - Position {symbol}: type={getattr(position, 'position_type', 'unknown')}, current_price={getattr(position, 'current_price', 'N/A')}, prev_price={getattr(position, 'prev_price', 'N/A')}, previous_day_price={getattr(position, 'previous_day_price', 'N/A')}, is_short={getattr(position, 'is_short', 'N/A')}")
                 if (hasattr(position, 'position_type') and position.position_type == 'option') or isinstance(position, OptionPosition):
-                    # For options, calculate based on price change (similar to equity)
-                    # For short options: (previous_day_price - current_price) * contracts * 100
-                    # For long options: (current_price - previous_day_price) * contracts * 100
                     if hasattr(position, 'previous_day_price') and hasattr(position, 'current_price'):
-                        # Use previous_day_price for daily P&L calculations
                         price_diff = position.previous_day_price - position.current_price if position.is_short else position.current_price - position.previous_day_price
-                        # Use previous_day_contracts instead of current contracts for consistent P&L calculation
                         pos_option_pnl = price_diff * abs(position.previous_day_contracts) * 100
                         option_pnl += pos_option_pnl
-                        self.logger.debug(f"Debug - Option P&L for {symbol}: previous_day_price={position.previous_day_price}, current_price={position.current_price}, price_diff={price_diff}, contracts={position.previous_day_contracts}, is_short={position.is_short}, P&L=${pos_option_pnl:.2f}")
                 elif hasattr(position, 'contracts') and hasattr(position, 'previous_day_price') and hasattr(position, 'current_price'):
                     # For equities, calculate P&L based on price change
-                    # Use previous_day_contracts instead of current contracts for consistent P&L calculation
                     pos_equity_pnl = position.previous_day_contracts * (position.current_price - position.previous_day_price)
                     equity_pnl += pos_equity_pnl
-                    self.logger.debug(f"Debug - Equity P&L for {symbol}: previous_day_price={position.previous_day_price}, current_price={position.current_price}, contracts={position.previous_day_contracts}, P&L=${pos_equity_pnl:.2f}")
             
             # Cash/other P&L is what's left after accounting for options and equities
             cash_pnl = daily_pnl - option_pnl - equity_pnl
             
-            # Log the P&L breakdown
+            # Log portfolio value and P&L breakdown
+            self.logger.info(f"Portfolio Value: ${portfolio_value:.2f}")
             self.logger.info(f"Daily P&L: ${daily_pnl:.2f} ({daily_pnl_percent:.2f}%)")
             self.logger.info(f"  • Option P&L: ${option_pnl:.2f}")
             self.logger.info(f"  • Equity P&L: ${equity_pnl:.2f}")
             self.logger.info(f"  • Cash/Other P&L: ${cash_pnl:.2f}")
             
-            # Add a separate line item for today's realized P&L
-            if realized_pnl_today != 0:
-                self.logger.info(f"Today's Realized P&L: ${realized_pnl_today:.2f} (from closed positions)")
+            # Also log realized P&L today if we have any
+            if hasattr(self, 'today_realized_pnl') and self.today_realized_pnl:
+                total_realized = sum(self.today_realized_pnl.values())
+                if total_realized != 0:
+                    self.logger.info(f"Today's Realized P&L: ${total_realized:.2f} (from closed positions)")
+        else:
+            self.logger.info(f"Portfolio Value: ${portfolio_value:.2f}")
         
         # Log open positions
         self._log_open_positions()
         
-        # Log margin details
-        self._log_margin_details()
+        # Log margin details - Reuse metrics to avoid duplicate calculations
+        self._log_margin_details(detailed=True, reuse_existing_metrics=True)
         
         # Log portfolio Greek risk
         self._log_portfolio_greek_risk()
         
-        # Log rolling risk metrics
-        self._log_rolling_risk_metrics()
-        
-        # Store current portfolio value as previous for next day's P&L calculation
+        # Store today's portfolio value for tomorrow's P&L calculation
         self.previous_portfolio_value = portfolio_value
         
-        self.logger.info("==================================================")
+        # Reset today's realized P&L tracker
+        self.today_realized_pnl = {}
+        
+        # Log the daily metrics if we are tracking them
+        if hasattr(self.portfolio, 'daily_metrics') and self.portfolio.daily_metrics:
+            self.logger.info("-" * 50)
+            
+            # Display rolling risk metrics
+            self.logger.info("Rolling Risk Metrics:")
+            
+            # Get total days in metrics
+            total_days = len(self.portfolio.daily_metrics)
+            
+            # Expanding window (always all data)
+            expanding_metrics = self._calculate_metrics_window(total_days)
+            self.logger.info(f"  Expanding Window (n={total_days})")
+            self.logger.info(f"    Sharpe: {expanding_metrics['sharpe_ratio']:.2f}, Volatility: {expanding_metrics['annual_volatility']:.2%}")
+            
+            # Log short, medium, and long window metrics if we have enough data
+            if total_days > 5:  # At least 5 days of data
+                # Define target window sizes but use expanding if not enough data
+                short_window = min(21, total_days)  # Target: 21 days (1 month)
+                medium_window = min(63, total_days)  # Target: 63 days (3 months)
+                long_window = min(252, total_days)  # Target: 252 days (1 year)
+                
+                # Only show the shorter windows if different from expanding
+                if short_window < total_days:
+                    short_metrics = self._calculate_metrics_window(short_window)
+                    self.logger.info(f"  Short Window (target=21 days)")
+                    self.logger.info(f"    Sharpe: {short_metrics['sharpe_ratio']:.2f}, Volatility: {short_metrics['annual_volatility']:.2%}")
+                else:
+                    self.logger.info(f"  Short Window (target=21 days)")
+                    self.logger.info(f"    Sharpe: {expanding_metrics['sharpe_ratio']:.2f}, Volatility: {expanding_metrics['annual_volatility']:.2%} (expanding window)")
+                
+                if medium_window < total_days and medium_window != short_window:
+                    medium_metrics = self._calculate_metrics_window(medium_window)
+                    self.logger.info(f"  Medium Window (target=63 days)")
+                    self.logger.info(f"    Sharpe: {medium_metrics['sharpe_ratio']:.2f}, Volatility: {medium_metrics['annual_volatility']:.2%}")
+                else:
+                    self.logger.info(f"  Medium Window (target=63 days)")
+                    
+                    if medium_window == short_window:
+                        self.logger.info(f"    Sharpe: {expanding_metrics['sharpe_ratio']:.2f}, Volatility: {expanding_metrics['annual_volatility']:.2%} (same as short window)")
+                    else:
+                        self.logger.info(f"    Sharpe: {expanding_metrics['sharpe_ratio']:.2f}, Volatility: {expanding_metrics['annual_volatility']:.2%} (expanding window)")
+                
+                if long_window < total_days and long_window != medium_window:
+                    long_metrics = self._calculate_metrics_window(long_window)
+                    self.logger.info(f"  Long Window (target=252 days)")
+                    self.logger.info(f"    Sharpe: {long_metrics['sharpe_ratio']:.2f}, Volatility: {long_metrics['annual_volatility']:.2%}")
+                else:
+                    self.logger.info(f"  Long Window (target=252 days)")
+                    
+                    if long_window == medium_window:
+                        self.logger.info(f"    Sharpe: {expanding_metrics['sharpe_ratio']:.2f}, Volatility: {expanding_metrics['annual_volatility']:.2%} (same as medium window)")
+                    else:
+                        self.logger.info(f"    Sharpe: {expanding_metrics['sharpe_ratio']:.2f}, Volatility: {expanding_metrics['annual_volatility']:.2%} (expanding window)")
+        
+        # Log the end of the summary
+        self.logger.info("=="*25)
+
+    def _calculate_metrics_window(self, window_size):
+        """
+        Calculate risk metrics for a specified window of past performance data.
+        
+        Args:
+            window_size: Number of days to include in the window
+            
+        Returns:
+            dict: Dictionary containing the calculated metrics
+        """
+        # Initialize default values
+        results = {
+            'sharpe_ratio': 0.0,
+            'annual_volatility': 0.0,
+            'max_drawdown': 0.0,
+            'total_return': 0.0
+        }
+        
+        # If we don't have any metrics or window_size is invalid, return defaults
+        if not hasattr(self.portfolio, 'daily_metrics') or not self.portfolio.daily_metrics or window_size <= 0:
+            return results
+            
+        # Get the daily metrics into a list
+        daily_metrics = list(self.portfolio.daily_metrics.values())
+        
+        # Ensure we don't try to use more data than we have
+        window_size = min(window_size, len(daily_metrics))
+        
+        # Get the most recent window_size metrics
+        window_metrics = daily_metrics[-window_size:]
+        
+        # Extract daily returns - if returns are not available, use value changes
+        if 'returns' in window_metrics[0]:
+            returns = [m.get('returns', 0) for m in window_metrics]
+        else:
+            # Calculate returns from portfolio values
+            values = [m.get('portfolio_value', 0) for m in window_metrics]
+            returns = []
+            
+            # Calculate daily returns
+            for i in range(1, len(values)):
+                if values[i-1] > 0:
+                    daily_return = (values[i] - values[i-1]) / values[i-1]
+                    returns.append(daily_return)
+                else:
+                    returns.append(0)
+                    
+            # Add a zero return for the first day
+            returns.insert(0, 0)
+        
+        # Calculate metrics
+        if len(returns) > 1:
+            # Calculate volatility (standard deviation of returns)
+            daily_volatility = self._calculate_std_dev(returns) if len(returns) > 1 else 0
+            
+            # Annualize volatility (approximate by multiplying by sqrt(252))
+            annual_volatility = daily_volatility * (252 ** 0.5) if daily_volatility else 0
+            results['annual_volatility'] = annual_volatility
+            
+            # Calculate Sharpe ratio
+            avg_return = sum(returns) / len(returns)
+            annualized_return = (1 + avg_return) ** 252 - 1
+            risk_free_rate = 0.02  # Assumed 2% risk-free rate
+            
+            # Avoid division by zero
+            if annual_volatility > 0:
+                sharpe_ratio = (annualized_return - risk_free_rate) / annual_volatility
+                results['sharpe_ratio'] = sharpe_ratio
+                
+            # Calculate max drawdown
+            values = [m.get('portfolio_value', 0) for m in window_metrics]
+            max_drawdown = self._calculate_max_drawdown(values)
+            results['max_drawdown'] = max_drawdown
+            
+            # Calculate total return over the period
+            if values[0] > 0:
+                total_return = (values[-1] - values[0]) / values[0]
+                results['total_return'] = total_return
+        
+        return results
+        
+    def _calculate_std_dev(self, values):
+        """
+        Calculate standard deviation of a list of values.
+        
+        Args:
+            values: List of numeric values
+            
+        Returns:
+            float: Standard deviation
+        """
+        if len(values) <= 1:
+            return 0
+            
+        mean = sum(values) / len(values)
+        variance = sum((x - mean) ** 2 for x in values) / (len(values) - 1)
+        return variance ** 0.5
+        
+    def _calculate_max_drawdown(self, values):
+        """
+        Calculate maximum drawdown from a list of values.
+        
+        Args:
+            values: List of numeric values representing portfolio values
+            
+        Returns:
+            float: Maximum drawdown as a percentage (0 to 1)
+        """
+        if not values or len(values) <= 1:
+            return 0
+            
+        # Calculate running maximum and drawdown
+        max_value = values[0]
+        max_drawdown = 0
+        
+        for value in values:
+            if value > max_value:
+                max_value = value
+            
+            # Calculate drawdown if we have a peak
+            if max_value > 0:
+                drawdown = (max_value - value) / max_value
+                max_drawdown = max(max_drawdown, drawdown)
+                
+        return max_drawdown
 
     def _log_rolling_risk_metrics(self):
         """
@@ -1266,11 +1592,19 @@ class TradingEngine:
             self.logger.warning(f"Exception in _log_rolling_risk_metrics: {e}")
             self.logger.debug(traceback.format_exc())
 
-    def _update_positions(self, current_date, daily_data):
+    def _update_positions(self, current_date: datetime, daily_data: pd.DataFrame) -> None:
         """
-        Update all positions with the latest market data
+        Update positions with the latest market data and greeks.
+        
+        Args:
+            current_date: Current trading date
+            daily_data: Data for the current trading day
         """
         self.logger.info(f"Updating positions with market data for {current_date.strftime('%Y-%m-%d')}")
+        
+        # Mark the start of a new day - Clear the cached metrics
+        if hasattr(self, '_cached_portfolio_metrics'):
+            self._cached_portfolio_metrics = None
         
         # Skip if no positions to manage
         if not self.portfolio.positions:
@@ -1445,6 +1779,21 @@ class TradingEngine:
                             vega = option_data['Vega'] if 'Vega' in option_data else None
                             iv = option_data['IV'] if 'IV' in option_data else None
                             
+                            # Make sure underlying price is set
+                            if 'UnderlyingPrice' in option_data and option_data['UnderlyingPrice'] > 0:
+                                position.underlying_price = option_data['UnderlyingPrice']
+                                self.logger.debug(f"Set underlying price for {symbol}: ${position.underlying_price:.2f}")
+                            elif latest_underlying_price is not None and latest_underlying_price > 0:
+                                position.underlying_price = latest_underlying_price
+                                self.logger.debug(f"Set underlying price for {symbol} from latest price: ${position.underlying_price:.2f}")
+                            else:
+                                # Try to get underlying price from a stock position with matching symbol
+                                for stock_symbol, stock_pos in self.portfolio.positions.items():
+                                    if stock_symbol == underlying_symbol and hasattr(stock_pos, 'current_price'):
+                                        position.underlying_price = stock_pos.current_price
+                                        self.logger.debug(f"Set underlying price for {symbol} from stock position: ${position.underlying_price:.2f}")
+                                        break
+                                
                             # Update position with new data
                             position.update_market_data(
                                 price=price,
@@ -1563,12 +1912,17 @@ class TradingEngine:
             self.logger.info("MARGIN MANAGEMENT:")
             self.logger.info("-" * 50)
             
+            # Use the data_manager method which already exists
+            market_data_by_symbol = self.data_manager.get_market_data_by_symbol(daily_data)
             rebalance_result = self.margin_manager.rebalance_portfolio(current_date, market_data_by_symbol)
             
             if rebalance_result.get('rebalanced', False):
-                self.logger.info(f"[TradingEngine] Portfolio rebalanced - {rebalance_result.get('positions_closed', 0)} positions closed")
-                self.logger.info(f"  Total margin freed: ${rebalance_result.get('margin_freed', 0):.2f}")
-                self.logger.info(f"  New margin utilization: {rebalance_result.get('final_utilization', 0):.2%}")
+                self.logger.info("[TradingEngine] Portfolio rebalanced")
+                # Log additional rebalance details if available
+                if 'positions_closed' in rebalance_result:
+                    self.logger.info(f"[TradingEngine] Positions closed: {rebalance_result['positions_closed']}")
+                if 'margin_reduced' in rebalance_result:
+                    self.logger.info(f"[TradingEngine] Margin reduced: ${rebalance_result['margin_reduced']:.2f}")
             else:
                 self.logger.info("No rebalancing needed, margin utilization within limits")
             
@@ -2165,12 +2519,16 @@ class TradingEngine:
         
         # Check if margin rebalancing is needed before making any new trades
         # This helps ensure we have margin capacity for new positions
+        # Use the market_data_by_symbol that was already created above
         rebalance_result = self.margin_manager.rebalance_portfolio(current_date, market_data_by_symbol)
         
         if rebalance_result.get('rebalanced', False):
-            self.logger.info(f"[TradingEngine] Portfolio rebalanced - {rebalance_result.get('positions_closed', 0)} positions closed")
-            self.logger.info(f"  Total margin freed: ${rebalance_result.get('margin_freed', 0):.2f}")
-            self.logger.info(f"  New margin utilization: {rebalance_result.get('final_utilization', 0):.2%}")
+            self.logger.info("[TradingEngine] Portfolio rebalanced")
+            # Log additional rebalance details if available
+            if 'positions_closed' in rebalance_result:
+                self.logger.info(f"[TradingEngine] Positions closed: {rebalance_result['positions_closed']}")
+            if 'margin_reduced' in rebalance_result:
+                self.logger.info(f"[TradingEngine] Margin reduced: ${rebalance_result['margin_reduced']:.2f}")
         
         # Extract filtered candidates based on strategy criteria
         candidates = self.strategy.filter_candidates(daily_data)
@@ -2236,6 +2594,19 @@ class TradingEngine:
         
         # Mark end of day for all positions (for daily P&L tracking)
         self.portfolio.mark_end_of_day()
+
+    def _parse_date(self, date_str):
+        """Parse date string to datetime object."""
+        if not date_str:
+            return None
+        try:
+            return datetime.fromisoformat(date_str)
+        except ValueError:
+            try:
+                return datetime.strptime(date_str, '%Y-%m-%d')
+            except ValueError:
+                self.logger.error(f"Could not parse date: {date_str}")
+                return None
 
 
 if __name__ == "__main__":

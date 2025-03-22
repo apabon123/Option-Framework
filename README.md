@@ -336,3 +336,89 @@ These files allow for thorough verification of the framework's calculations and 
 
 - Option Pricing Models: Based on the Black-Scholes-Merton framework
 - SPAN Margin Calculations: Inspired by methodologies used by CME Group
+
+# Intraday Momentum Strategy
+
+The Option-Framework now includes an implementation of the Intraday Momentum Strategy, based on the paper "Beat the Market - An Effective Intraday Momentum Strategy".
+
+## Strategy Overview
+
+The Intraday Momentum Strategy identifies breakouts from a "noise range" established around the opening price. The strategy:
+
+1. Calculates a volatility-based noise range around the opening price (or previous close)
+2. Generates long signals when price breaks above the upper bound
+3. Generates short signals when price breaks below the lower bound
+4. Uses trailing stops based on the noise range boundaries
+
+## Configuration
+
+The strategy can be configured through the `config/intraday_momentum_config.yaml` file. Key parameters include:
+
+- `lookback_days`: Number of days to look back for volatility calculation
+- `volatility_multiplier`: Multiplier applied to average range to determine the noise range
+- `entry_times`: List of minute marks to check for entry signals (e.g., [0, 15, 30, 45])
+- `min_holding_period_minutes`: Minimum time to hold a position before considering exit
+- `invert_signals`: Whether to invert the strategy signals (false by default)
+
+## Running the Strategy
+
+To run the Intraday Momentum Strategy:
+
+```bash
+python run_intraday_strategy.py --config config/intraday_momentum_config.yaml
+```
+
+Optional parameters:
+- `--debug`: Enable debug mode with additional logging
+- `--margin-log-level`: Set the margin log level (debug, info, warning, error, verbose)
+
+## Data Requirements
+
+The strategy works best with intraday data (minute bars) but can also work with daily data in a simplified mode. For intraday trading, ensure your data has proper timestamp indexing with timezone information.
+
+## Risk Management Module
+
+The Option-Framework includes a comprehensive risk management system that allows for dynamic position sizing and risk control across different market conditions. The risk module provides several risk management approaches:
+
+### Available Risk Managers
+
+- **VolatilityTargetRiskManager**: Scales position sizes to target a specific annualized volatility, automatically adjusting for changing market conditions.
+- **SharpeRatioRiskManager**: Adjusts position sizes based on risk-adjusted returns, scaling up for strategies with better Sharpe ratios.
+- **AdaptiveRiskManager**: Implements a "heat" system that reduces position sizes after losses and gradually increases them during positive performance periods.
+- **CombinedRiskManager**: Uses a weighted combination of multiple risk approaches for more robust position sizing.
+
+### Key Features
+
+- Configurable risk limits including maximum position sizes, daily loss limits, and concentration limits
+- Dynamic position sizing based on performance metrics and market conditions
+- Comprehensive risk metrics calculation including drawdowns, Sharpe ratios, and Value at Risk
+- Full integration with trading strategies and backtesting systems
+
+### Configuration
+
+Risk managers are configured through YAML configuration files. See `config/risk_config.yaml` for a detailed example with comments explaining each parameter.
+
+```yaml
+# Example of basic risk configuration
+risk:
+  risk_limits:
+    max_position_size: 10
+    max_daily_loss: 0.02
+  manager_type: "volatility"
+  volatility:
+    target_volatility: 0.15
+```
+
+### Usage
+
+To use a risk manager in your strategy:
+
+```python
+from core.risk.factory import RiskManagerFactory
+
+# Create a risk manager from config
+risk_manager = RiskManagerFactory.create(config, risk_metrics, logger)
+
+# Calculate position size
+position_size = risk_manager.calculate_position_size(data, portfolio_metrics)
+```

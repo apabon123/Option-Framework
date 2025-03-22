@@ -1,0 +1,49 @@
+# Intraday Momentum Strategy Configuration
+
+# General settings
+debug_mode: true
+margin_log_level: info  # Options: debug, info, warning, error, verbose
+
+# Portfolio settings
+portfolio:
+  initial_capital: 100000
+  max_leverage: 1.5
+
+# Dates
+dates:
+  start_date: 2024-01-02
+  end_date: 2024-01-31
+
+# Data settings
+data:
+  source: csv
+  file_path: data/spy_minute_data.csv  # Replace with your actual data file
+  timeframe: 1m  # Minute data
+  symbols: 
+    - SPY
+
+# Strategy configuration
+strategy:
+  name: IntradayMomentumStrategy
+  lookback_days: 20
+  volatility_multiplier: 1.2
+  entry_times: [0, 15, 30, 45]  # Trade at 0, 15, 30, 45 minutes past the hour
+  min_holding_period_minutes: 15
+  invert_signals: false
+
+# Risk management
+risk_management:
+  max_position_size: 0.2  # Maximum position size as fraction of portfolio
+  stop_loss_pct: 0.02  # 2% stop loss
+
+# Market hours
+market_hours:
+  open: 09:30
+  close: 16:00
+  last_entry: 15:30
+
+# Reporting
+reporting:
+  enable_charts: true
+  save_results: true
+  output_dir: reports/intraday_momentum 

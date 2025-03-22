@@ -1,0 +1,78 @@
+# Risk Management Configuration Example
+# This file contains configuration settings for risk management in the Option-Framework
+
+# Basic risk limits that apply to all risk managers
+risk:
+  # Risk limits for all managers
+  risk_limits:
+    max_position_size: 10  # Maximum position size in contracts/shares
+    min_position_size: 1   # Minimum position size in contracts/shares
+    position_limit_pct: 0.20  # Maximum position size as percentage of equity
+    max_daily_loss: 0.02  # Maximum daily loss as percentage of equity
+    concentration_limit: 0.40  # Maximum concentration in a single position
+  
+  # Risk manager type (volatility, sharpe, adaptive, combined)
+  manager_type: "volatility"
+  
+  # Volatility-based risk management parameters
+  volatility:
+    target_volatility: 0.15  # Target annualized volatility (15%)
+    lookback_days: 21  # Days to look back for recent volatility
+    min_variance_ratio: 0.5  # Minimum allowed variance ratio
+    max_variance_ratio: 2.0  # Maximum allowed variance ratio
+    window_days: 63  # Window for calculating historical volatility
+    window_type: "medium"  # Window type (short, medium, long)
+  
+  # Sharpe ratio-based risk management parameters
+  sharpe:
+    min_sharpe: 0.5  # Minimum Sharpe ratio
+    target_sharpe: 1.5  # Target Sharpe ratio
+    lookback_days: 21  # Days to look back for recent Sharpe
+    window_days: 63  # Window for calculating historical Sharpe
+    risk_free_rate: 0.02  # Annual risk-free rate (2%)
+    window_type: "medium"  # Window type (short, medium, long)
+  
+  # Adaptive risk management parameters
+  adaptive:
+    max_heat: 1.0  # Maximum heat level (0.0-1.0)
+    cooldown_rate: 0.05  # Rate at which heat decreases after gains
+    heatup_rate: 0.02  # Rate at which heat increases after losses
+    recovery_factor: 2.0  # Factor to apply to recovery ratio
+    window_days: 21  # Window for calculating drawdowns
+    window_type: "short"  # Window type (short, medium, long)
+  
+  # Combined risk management parameters
+  combined:
+    # Weights for each risk manager (must sum to 1.0)
+    weights: [0.4, 0.3, 0.3]  # [volatility, sharpe, adaptive]
+    min_position_size: 0.1  # Minimum position size as fraction of base size
+    max_position_size: 2.0  # Maximum position size as fraction of base size
+
+# Contract specification
+contract_spec:
+  margin: 5000  # Initial margin requirement per contract
+  tick_size: 0.25  # Minimum price movement
+  tick_value: 12.50  # Value of one tick
+  multiplier: 50  # Contract multiplier
+
+# Risk metrics calculation settings
+risk_metrics:
+  # Window sizes for different period lengths
+  windows:
+    short: 21    # Short-term window (days)
+    medium: 63   # Medium-term window (days)
+    long: 252    # Long-term window (days)
+  
+  # Minimum periods required for calculations
+  min_periods:
+    short: 15    # Minimum periods for short window
+    medium: 45   # Minimum periods for medium window
+    long: 180    # Minimum periods for long window
+  
+  # Risk-free rate for Sharpe ratio calculation
+  risk_free_rate: 0.02  # Annual risk-free rate (2%)
+  
+  # Enable/disable specific metrics
+  enable_var: true      # Enable Value at Risk calculation
+  enable_cvar: true     # Enable Conditional Value at Risk
+  enable_drawdown: true # Enable drawdown metrics 
