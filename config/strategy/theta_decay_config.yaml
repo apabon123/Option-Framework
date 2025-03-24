@@ -1,0 +1,107 @@
+################################################################################
+#                     THETA DECAY STRATEGY CONFIGURATION                     #
+################################################################################
+
+# Strategy Configuration
+strategy:
+  # Strategy name
+  name: "ThetaDecayStrategy"
+  
+  # Minimum days to expiration for new positions
+  days_to_expiry_min: 30
+  
+  # Maximum days to expiration for new positions
+  days_to_expiry_max: 45
+  
+  # Whether to sell options (true) or buy options (false)
+  is_short: true
+  
+  # Target delta value for option selection
+  # -0.15 = Sell options with approximately 15 delta
+  delta_target: -0.15
+  
+  # Acceptable deviation from target delta when selecting options
+  delta_tolerance: 0.03
+  
+  # Profit target as percentage of max profit (0.6 = exit at 60% of max profit)
+  profit_target: 0.6
+  
+  # Multiple of credit received before triggering stop loss
+  # 2.0 = Close position if loss reaches 2.0x the credit received
+  stop_loss_threshold: 2.0
+  
+  # Days to expiration threshold for closing positions
+  # 10 = Close positions when they reach 10 days to expiry
+  close_days_to_expiry: 10
+  
+  # Minimum size for new positions (in contracts)
+  min_position_size: 1
+  
+  # Theta-specific settings
+  # Minimum theta/vega ratio required for entry
+  min_theta_vega_ratio: 0.15
+  
+  # Minimum theta value required for entry
+  min_theta: 0.05
+  
+  # Weight for theta in option selection scoring
+  theta_weight: 2.0
+  
+  # Weight for vega in option selection scoring (negative as we want to minimize vega)
+  vega_weight: -1.0
+
+# Paths Configuration
+paths:
+  # Input data file containing option chains
+  input_file: "C:\\Users\\alexp\\OneDrive\\Gdrive\\Trading\\Data Outputs\\SPY_Combined.csv"
+  
+  # Directory for storing output logs and results
+  output_dir: "C:\\Users\\alexp\\OneDrive\\Gdrive\\Trading\\Data Outputs\\scenario_results"
+
+# Backtest Date Range
+dates:
+  # Start date for the backtest period (YYYY-MM-DD)
+  start_date: "2024-01-02"
+  
+  # End date for the backtest period (YYYY-MM-DD)
+  end_date: "2024-01-05"
+
+# Portfolio Settings
+portfolio:
+  # Starting capital amount in USD
+  initial_capital: 100000
+  
+  # Maximum leverage allowed for the portfolio
+  max_leverage: 6
+  
+  # Maximum percentage of Net Liquidation Value to deploy
+  max_nlv_percent: 0.7
+  
+  # Maximum position size as percentage of portfolio
+  max_position_size_pct: 0.08
+
+# Logging Configuration
+logging:
+  # Logging level: DEBUG, INFO, WARNING, ERROR, CRITICAL
+  level: "DEBUG"
+  
+  # Whether to log to file
+  file: true
+  
+  # Component-specific logging
+  components:
+    # Margin calculation logging
+    margin:
+      level: "verbose"
+    
+    # Portfolio logging
+    portfolio:
+      level: "verbose"
+
+# Include other configurations
+includes:
+  # Risk management configuration
+  risk_config: "../config/risk/standard_risk.yaml"
+  
+  # Margin configuration
+  margin_config: "../config/margin/span_margin.yaml" 

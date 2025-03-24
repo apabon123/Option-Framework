@@ -6,6 +6,39 @@ A comprehensive options trading framework designed for backtesting and simulatin
 
 This framework provides a complete environment for developing, testing, and evaluating options trading strategies. It features accurate Greek calculations, dynamic delta hedging, position management, and detailed performance reporting.
 
+## Documentation
+
+This repository contains several README files that provide detailed documentation for different components:
+
+- **[Main Documentation](README.md)** - This file, providing an overview of the entire system
+- **[Documentation Structure Guide](docs/README_STRUCTURE.md)** - Explains how documentation is organized
+- **[Margin System Documentation](docs/README_MARGIN.md)** - Details of the margin calculation system
+- **[Strategy Documentation](docs/README_STRATEGIES.md)** - Information about implemented strategies
+- **[Position Management Documentation](docs/README_POSITION.md)** - Details of position tracking and management
+- **[Hedging System Documentation](docs/README_HEDGING.md)** - Documentation for the hedging system
+- **[Configuration Guide](docs/README_CONFIGURATION.md)** - Guide to all configuration options
+
+## Quick Start
+
+To run the Put Sell Strategy with enhanced logging:
+
+```bash
+python run_put_sell_strat.py
+```
+
+For other strategies, you can use the main entry point:
+
+```bash
+# Run a backtest with verbose output
+python Main.py -v
+
+# Run with specific configuration
+python Main.py --config config/config.yaml
+
+# Run with a specific strategy
+python Main.py -s ThetaDecayStrategy
+```
+
 ## Recent Changes
 
 - **Enhanced SPAN Margin Calculator**: Greatly improved the SPAN margin calculation system with configurable parameters, vega risk incorporation, proper delta hedging benefits, and partial hedge handling

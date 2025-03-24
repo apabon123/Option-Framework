@@ -1,0 +1,150 @@
+################################################################################
+#                   VOLATILITY BREAKOUT STRATEGY CONFIGURATION              #
+################################################################################
+
+# Strategy Configuration
+strategy:
+  # Strategy name
+  name: "VolatilityBreakoutStrategy"
+  
+  # ATR Period for volatility calculation
+  atr_period: 14
+  
+  # Multiplier applied to ATR for breakout determination
+  atr_multiplier: 1.5
+  
+  # Whether to enter on long breakouts
+  enter_long: true
+  
+  # Whether to enter on short breakouts
+  enter_short: true
+  
+  # Use previous day's high/low as reference (false = use opening range)
+  use_prev_day_reference: false
+  
+  # Length of opening range in minutes (if not using previous day reference)
+  opening_range_minutes: 30
+  
+  # Position sizing method: "fixed", "percent", "volatility", "kelly"
+  position_sizing: "volatility"
+  
+  # Risk percentage per trade (for percent or volatility sizing)
+  risk_per_trade: 0.02
+  
+  # Fixed position size (for fixed sizing)
+  fixed_size: 100
+  
+  # Maximum position size as percentage of account
+  max_position_size_pct: 0.1
+  
+  # Stop loss as ATR multiple
+  stop_loss_atr: 2.0
+  
+  # Take profit as ATR multiple
+  take_profit_atr: 3.0
+  
+  # Whether to trail stops once in profit
+  use_trailing_stop: true
+  
+  # When to start trailing (profit as ATR multiple)
+  trailing_start_atr: 1.0
+  
+  # Trailing stop as ATR multiple
+  trailing_stop_atr: 1.5
+  
+  # Maximum number of trades per day
+  max_trades_per_day: 2
+  
+  # Time-based exit (minutes after entry)
+  time_exit_minutes: 240
+  
+  # Filter settings
+  filters:
+    # Minimum ADX value to trade
+    min_adx: 20
+    
+    # ADX period for calculation
+    adx_period: 14
+    
+    # Only trade in direction of longer-term trend
+    trend_filter: true
+    
+    # Period for trend filter (SMA)
+    trend_period: 50
+
+# Data Configuration
+data:
+  # Data file path
+  file_path: "../tests/data/daily_test_data.csv"
+  
+  # Timezone of the data (default is America/New_York)
+  timezone: "America/New_York"
+  
+  # Whether data is daily or intraday
+  daily: false
+  
+  # Time interval in minutes (for intraday data)
+  interval_minutes: 5
+
+# Backtest Date Range
+dates:
+  # Start date for the backtest period (YYYY-MM-DD)
+  start_date: "2024-01-02"
+  
+  # End date for the backtest period (YYYY-MM-DD)
+  end_date: "2024-01-31"
+
+# Portfolio Settings
+portfolio:
+  # Starting capital amount in USD
+  initial_capital: 100000
+  
+  # Maximum leverage
+  max_leverage: 1.0
+  
+  # Maximum percentage of portfolio in one position
+  max_position_pct: 0.2
+  
+  # Commission per trade (in USD)
+  commission: 0.005
+  
+  # Slippage model: "fixed", "percent"
+  slippage_model: "percent"
+  
+  # Slippage amount (fixed = USD, percent = decimal)
+  slippage_amount: 0.0005
+
+# Logging Configuration
+logging:
+  # Logging level: DEBUG, INFO, WARNING, ERROR, CRITICAL
+  level: "INFO"
+  
+  # Whether to log to file
+  file: true
+  
+  # Component-specific logging
+  components:
+    # Signal generation logging
+    signals:
+      level: "verbose"
+    
+    # Portfolio logging
+    portfolio:
+      level: "verbose"
+
+# Output Configuration
+output:
+  # Directory for storing output logs and results
+  directory: "C:\\Users\\alexp\\OneDrive\\Gdrive\\Trading\\Data Outputs\\scenario_results"
+  
+  # Save trade data to CSV
+  save_trades: true
+  
+  # Save equity curve data to CSV
+  save_equity_curve: true
+  
+  # Generate performance charts
+  generate_charts: true
+  
+  # Save tearsheet report
+  save_tearsheet: true 

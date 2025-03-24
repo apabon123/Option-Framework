@@ -1,0 +1,66 @@
+################################################################################
+#                         STRATEGY REGISTRY CONFIGURATION                  #
+################################################################################
+
+# This file serves as a central registry for all available trading strategies
+# Each entry contains the strategy name, description, configuration path,
+# and the script to run it
+
+strategies:
+  
+  # Theta Decay Strategy
+  theta_decay:
+    name: "Theta Decay Strategy"
+    description: "A strategy that focuses on selling options to capture theta decay"
+    config_path: "config/strategy/theta_decay_config.yaml"
+    script_path: "scripts/run_theta_decay.py"
+    tags: ["options", "theta", "premium-selling"]
+  
+  # Call-Put Strategy
+  call_put:
+    name: "Call-Put Strategy"
+    description: "A balanced strategy that trades both call and put options with defined risk parameters"
+    config_path: "config/strategy/call_put_config.yaml"
+    script_path: "scripts/run_call_put.py"
+    tags: ["options", "balanced", "multi-leg"]
+  
+  # Intraday Momentum Strategy
+  intraday_momentum:
+    name: "Intraday Momentum Strategy"
+    description: "A strategy that trades intraday momentum patterns with volatility-based entries"
+    config_path: "config/strategy/intraday_momentum_config.yaml"
+    script_path: "scripts/run_intraday_momentum.py"
+    tags: ["equity", "intraday", "momentum"]
+  
+  # Volatility Breakout Strategy
+  volatility_breakout:
+    name: "Volatility Breakout Strategy"
+    description: "A strategy that trades breakouts from volatility ranges using ATR measurements"
+    config_path: "config/strategy/volatility_breakout_config.yaml"
+    script_path: "scripts/run_volatility_breakout.py"
+    tags: ["equity", "breakout", "volatility"]
+  
+  # Put Selling Strategy
+  put_sell:
+    name: "Put Selling Strategy"
+    description: "A strategy focused on selling out-of-the-money put options to collect premium"
+    config_path: "config/strategy/put_sell_config.yaml"
+    script_path: "scripts/run_put_sell_strat.py"
+    tags: ["options", "put", "premium-selling"]
+
+# Default configuration paths
+defaults:
+  risk_config: "config/risk/default_risk_config.yaml"
+  margin_config: "config/margin/default_margin_config.yaml"
+  portfolio_config: "config/portfolio/default_portfolio_config.yaml"
+  logging_config: "config/logging/default_logging_config.yaml"
+
+# Strategy categories for organizing in the UI
+categories:
+  options_strategies:
+    name: "Options Strategies"
+    strategies: ["theta_decay", "call_put", "put_sell"]
+  
+  equity_strategies:
+    name: "Equity Strategies"
+    strategies: ["intraday_momentum", "volatility_breakout"] 

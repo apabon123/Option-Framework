@@ -1,0 +1,108 @@
+################################################################################
+#                     CALL-PUT STRATEGY CONFIGURATION                       #
+################################################################################
+
+# Strategy Configuration
+strategy:
+  # Strategy name
+  name: "CallPutStrat"
+  
+  # Minimum days to expiration for new positions
+  days_to_expiry_min: 45
+  
+  # Maximum days to expiration for new positions
+  days_to_expiry_max: 60
+  
+  # Whether to sell options (true) or buy options (false)
+  is_short: true
+  
+  # Target delta value for put option selection
+  # -0.2 = Sell put options with approximately 20 delta
+  put_delta_target: -0.2
+  
+  # Target delta value for call option selection
+  # 0.2 = Sell call options with approximately 20 delta
+  call_delta_target: 0.2
+  
+  # Acceptable deviation from target delta when selecting options
+  delta_tolerance: 0.02
+  
+  # Profit target as percentage of max profit (0.65 = exit at 65% of max profit)
+  profit_target: 0.65
+  
+  # Multiple of credit received before triggering stop loss
+  # 2.5 = Close position if loss reaches 2.5x the credit received
+  stop_loss_threshold: 2.5
+  
+  # Days to expiration threshold for closing positions
+  # 14 = Close positions when they reach 14 days to expiry
+  close_days_to_expiry: 14
+  
+  # Minimum size for new positions (in contracts)
+  min_position_size: 1
+  
+  # Call-Put specific settings
+  # Maximum total positions (calls + puts)
+  max_total_positions: 20
+  
+  # Maximum ratio of calls to puts (1.0 = equal number)
+  max_call_put_ratio: 1.2
+  
+  # Minimum ratio of calls to puts (1.0 = equal number)
+  min_call_put_ratio: 0.8
+
+# Paths Configuration
+paths:
+  # Input data file containing option chains
+  input_file: "C:\\Users\\alexp\\OneDrive\\Gdrive\\Trading\\Data Outputs\\SPY_Combined.csv"
+  
+  # Directory for storing output logs and results
+  output_dir: "C:\\Users\\alexp\\OneDrive\\Gdrive\\Trading\\Data Outputs\\scenario_results"
+
+# Backtest Date Range
+dates:
+  # Start date for the backtest period (YYYY-MM-DD)
+  start_date: "2024-01-02"
+  
+  # End date for the backtest period (YYYY-MM-DD)
+  end_date: "2024-01-05"
+
+# Portfolio Settings
+portfolio:
+  # Starting capital amount in USD
+  initial_capital: 100000
+  
+  # Maximum leverage allowed for the portfolio
+  max_leverage: 10
+  
+  # Maximum percentage of Net Liquidation Value to deploy
+  max_nlv_percent: 0.9
+  
+  # Maximum position size as percentage of portfolio
+  max_position_size_pct: 0.05
+
+# Logging Configuration
+logging:
+  # Logging level: DEBUG, INFO, WARNING, ERROR, CRITICAL
+  level: "DEBUG"
+  
+  # Whether to log to file
+  file: true
+  
+  # Component-specific logging
+  components:
+    # Margin calculation logging
+    margin:
+      level: "verbose"
+    
+    # Portfolio logging
+    portfolio:
+      level: "verbose"
+
+# Include other configurations
+includes:
+  # Risk management configuration
+  risk_config: "../config/risk/standard_risk.yaml"
+  
+  # Margin configuration
+  margin_config: "../config/margin/span_margin.yaml" 

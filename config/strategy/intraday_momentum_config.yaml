@@ -1,0 +1,115 @@
+################################################################################
+#                     INTRADAY MOMENTUM STRATEGY CONFIGURATION              #
+################################################################################
+
+# Strategy Configuration
+strategy:
+  # Strategy name
+  name: "IntradayMomentumStrategy"
+  
+  # Number of days to look back for volatility calculation
+  lookback_days: 20
+  
+  # Volatility multiplier for calculating noise range
+  volatility_multiplier: 1.5
+  
+  # Entry times in minutes since market open (0, 15, 30, 45, etc.)
+  entry_times: [0, 15, 30, 45, 60, 75, 90, 105, 120, 135, 150, 165, 180, 195, 210, 225, 240, 255, 270, 285, 300, 315, 330, 345, 360, 375]
+  
+  # Minimum time to hold a position before considering exit (in minutes)
+  min_holding_period_minutes: 15
+  
+  # Whether to invert the strategy signals (false by default)
+  invert_signals: false
+  
+  # Use previous close as reference instead of open price
+  use_prev_close: false
+  
+  # Minimum number of days with data required before trading
+  min_history_days: 10
+  
+  # Maximum position size as percentage of account
+  max_position_size_pct: 0.1
+  
+  # Maximum leverage for intraday positions
+  max_leverage: 2.0
+  
+  # Stop loss as percentage of position value
+  stop_loss_pct: 0.01
+  
+  # Take profit as percentage of position value
+  take_profit_pct: 0.02
+  
+  # Whether to use trailing stops
+  use_trailing_stop: true
+  
+  # Trailing stop as percentage of position entry price
+  trailing_stop_pct: 0.005
+
+# Intraday Data Configuration
+intraday:
+  # Intraday data file path
+  file_path: "../tests/data/intraday_test_data.csv"
+  
+  # Timezone of the data (default is America/New_York)
+  timezone: "America/New_York"
+  
+  # Market open time (HH:MM:SS)
+  market_open: "09:30:00"
+  
+  # Market close time (HH:MM:SS)
+  market_close: "16:00:00"
+  
+  # Time interval in minutes
+  interval_minutes: 1
+
+# Backtest Date Range
+dates:
+  # Start date for the backtest period (YYYY-MM-DD)
+  start_date: "2024-01-02"
+  
+  # End date for the backtest period (YYYY-MM-DD)
+  end_date: "2024-01-05"
+
+# Portfolio Settings
+portfolio:
+  # Starting capital amount in USD
+  initial_capital: 100000
+  
+  # Maximum percentage of Net Liquidation Value to deploy
+  max_nlv_percent: 0.8
+  
+  # Maximum open positions at any time
+  max_open_positions: 1
+
+# Logging Configuration
+logging:
+  # Logging level: DEBUG, INFO, WARNING, ERROR, CRITICAL
+  level: "DEBUG"
+  
+  # Whether to log to file
+  file: true
+  
+  # Component-specific logging
+  components:
+    # Margin calculation logging
+    margin:
+      level: "verbose"
+    
+    # Portfolio logging
+    portfolio:
+      level: "verbose"
+
+# Output Configuration
+output:
+  # Directory for storing output logs and results
+  directory: "C:\\Users\\alexp\\OneDrive\\Gdrive\\Trading\\Data Outputs\\scenario_results"
+  
+  # Save trade data to CSV
+  save_trades: true
+  
+  # Save equity curve data to CSV
+  save_equity_curve: true
+  
+  # Generate performance charts
+  generate_charts: true 
