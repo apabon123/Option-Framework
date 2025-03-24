@@ -29,8 +29,8 @@ def main():
     parser = argparse.ArgumentParser(description="Run Call-Put Strategy with detailed logging")
     parser.add_argument(
         "-c", "--config",
-        default="../config/strategy/call_put_config.yaml",
-        help="Path to configuration YAML file (default: ../config/strategy/call_put_config.yaml)"
+        default=os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "config/strategy/call_put_config.yaml"),
+        help="Path to configuration YAML file"
     )
     parser.add_argument(
         "--start-date",

@@ -29,8 +29,8 @@ def main():
     parser = argparse.ArgumentParser(description="Run Theta Decay Strategy with detailed logging")
     parser.add_argument(
         "-c", "--config",
-        default="../config/strategy/theta_decay_config.yaml",
-        help="Path to configuration YAML file (default: ../config/strategy/theta_decay_config.yaml)"
+        default=os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "config/strategy/theta_decay_config.yaml"),
+        help="Path to configuration YAML file"
     )
     parser.add_argument(
         "--start-date",

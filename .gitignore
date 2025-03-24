@@ -178,3 +178,31 @@ cython_debug/
 !requirements.txt
 debug_output.txt
 .cursor/
+
+# PyCharm project files
+.idea/
+
+# VS Code project files
+.vscode/
+
+# Output directories
+output/
+
+# Data files
+*.csv
+*.parquet
+*.h5
+*.pkl
+
+# But include test data files
+!tests/data/**/*.csv
+
+# Log files
+*.log
+logs/
+
+# Temporary files
+*.swp
+*.swo
+*~
+.DS_Store

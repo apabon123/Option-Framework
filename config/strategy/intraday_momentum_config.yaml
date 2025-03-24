@@ -7,11 +7,14 @@ strategy:
   # Strategy name
   name: "IntradayMomentumStrategy"
   
+  # Symbol to trade
+  symbol: "NQ"
+  
   # Number of days to look back for volatility calculation
-  lookback_days: 20
+  lookback_days: 21
   
   # Volatility multiplier for calculating noise range
-  volatility_multiplier: 1.5
+  volatility_multiplier: 1.0
   
   # Entry times in minutes since market open (0, 15, 30, 45, etc.)
   entry_times: [0, 15, 30, 45, 60, 75, 90, 105, 120, 135, 150, 165, 180, 195, 210, 225, 240, 255, 270, 285, 300, 315, 330, 345, 360, 375]
@@ -29,7 +32,7 @@ strategy:
   min_history_days: 10
   
   # Maximum position size as percentage of account
-  max_position_size_pct: 0.1
+  max_position_size_pct: 0.25
   
   # Maximum leverage for intraday positions
   max_leverage: 2.0
@@ -46,19 +49,39 @@ strategy:
   # Trailing stop as percentage of position entry price
   trailing_stop_pct: 0.005
 
+# Contract Specifications
+contract_specs:
+  # Minimum price movement
+  tick_size: 0.25
+  
+  # Dollar value per point
+  multiplier: 20
+  
+  # Initial margin requirement
+  margin: 17600
+  
+  # Regular trading hours start (HH:MM)
+  market_open: "08:31"
+  
+  # Regular trading hours end (HH:MM)
+  market_close: "15:00"
+  
+  # Final trade entry time allowed (HH:MM)
+  last_entry: "14:30"
+
 # Intraday Data Configuration
 intraday:
   # Intraday data file path
-  file_path: "../tests/data/intraday_test_data.csv"
+  file_path: "C:/Users/alexp/OneDrive/Gdrive/Trading/Data Downloads/Python/1_Minute/TS_@NQ_Minute_1_20241025_2100_to_19990701_0532.csv"
   
   # Timezone of the data (default is America/New_York)
-  timezone: "America/New_York"
+  timezone: "US/Central"
   
   # Market open time (HH:MM:SS)
-  market_open: "09:30:00"
+  market_open: "08:31:00"
   
   # Market close time (HH:MM:SS)
-  market_close: "16:00:00"
+  market_close: "15:00:00"
   
   # Time interval in minutes
   interval_minutes: 1
@@ -69,7 +92,7 @@ dates:
   start_date: "2024-01-02"
   
   # End date for the backtest period (YYYY-MM-DD)
-  end_date: "2024-01-05"
+  end_date: "2024-10-25"
 
 # Portfolio Settings
 portfolio:
@@ -81,6 +104,46 @@ portfolio:
   
   # Maximum open positions at any time
   max_open_positions: 1
+  
+  # Maximum daily loss amount
+  max_daily_loss: 5000
+  
+  # Maximum drawdown before trading stops
+  max_drawdown: 0.20
+
+# Risk Manager Parameters
+risk_params:
+  # Risk manager type (options: 'volatility', 'sharpe', 'adaptive', 'combined')
+  risk_manager_type: 'sharpe'
+  
+  # Target Sharpe ratio
+  target_sharpe: 1.0
+  
+  # Minimum position multiplier
+  min_scaling: 0.005
+  
+  # Maximum position multiplier
+  max_scaling: 10.0
+  
+  # Target annual volatility
+  target_volatility: 0.8
+  
+  # Speed of position size adjustment
+  adaptation_rate: 0.1
+
+# Transaction Costs
+transaction_costs:
+  # Per-contract commission
+  commission_rate: 0.0
+  
+  # Estimated execution slippage
+  slippage_rate: 0.0
+  
+  # Minimum commission per trade
+  min_commission: 0.0
+  
+  # Fixed costs per trade
+  fixed_costs: 0.0
 
 # Logging Configuration
 logging:
@@ -99,6 +162,18 @@ logging:
     # Portfolio logging
     portfolio:
       level: "verbose"
+    
+    # Strategy logging
+    strategy:
+      level: "DEBUG"
+    
+    # Data manager logging
+    data_manager:
+      level: "DEBUG"
+    
+    # Risk manager logging
+    risk_manager:
+      level: "DEBUG"
 
 # Output Configuration
 output:
