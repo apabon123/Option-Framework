@@ -190,10 +190,55 @@ def main():
     # Initialize the trading engine with the configuration
     print("Initializing trading engine...")
     try:
+        # Add debug code to analyze the data file
+        if 'paths' in config and 'input_file' in config['paths']:
+            input_file = config['paths']['input_file']
+            if os.path.exists(input_file):
+                print(f"\n=== Analyzing Input File: {input_file} ===")
+                try:
+                    import pandas as pd
+                    df = pd.read_csv(input_file)
+                    print(f"Successfully read data file. Shape: {df.shape}")
+                    
+                    # Check date column
+                    date_col = 'date'
+                    if date_col in df.columns:
+                        print(f"Date column found: {date_col}")
+                        
+                        # Convert to datetime if needed
+                        if df[date_col].dtype != 'datetime64[ns]':
+                            df[date_col] = pd.to_datetime(df[date_col])
+                        
+                        # Get unique dates
+                        unique_dates = df[date_col].dt.date.unique()
+                        if len(unique_dates) > 0:
+                            print(f"Data contains {len(unique_dates)} unique dates")
+                            print(f"Date range: {min(unique_dates)} to {max(unique_dates)}")
+                            
+                            # Check against backtest dates
+                            start_date = pd.to_datetime(config.get('dates', {}).get('start_date')).date()
+                            end_date = pd.to_datetime(config.get('dates', {}).get('end_date')).date()
+                            print(f"Backtest period: {start_date} to {end_date}")
+                            
+                            dates_in_range = sorted([d for d in unique_dates if start_date <= d <= end_date])
+                            if dates_in_range:
+                                print(f"Found {len(dates_in_range)} trading dates in backtest period:")
+                                print(dates_in_range)
+                            else:
+                                print("WARNING: No trading dates found in the specified backtest period!")
+                                print("This will cause the 'No trading dates available' error.")
+                    else:
+                        print(f"WARNING: Date column '{date_col}' not found in data.")
+                        print(f"Available columns: {list(df.columns)}")
+                except Exception as e:
+                    print(f"Error analyzing data file: {e}")
+            else:
+                print(f"WARNING: Input file does not exist: {input_file}")
+        
         engine = TradingEngine(config, logger)
         
         # Run the backtest
-        print("Starting backtest...")
+        print("\nStarting backtest...")
         engine.run_backtest()
         
         # Print summary

@@ -8,10 +8,10 @@ strategy:
   name: "PutSellStrat"
   
   # Minimum days to expiration for new positions
-  days_to_expiry_min: 45
+  days_to_expiry_min: 60
   
   # Maximum days to expiration for new positions
-  days_to_expiry_max: 60
+  days_to_expiry_max: 90
   
   # Whether to sell options (true) or buy options (false)
   is_short: true
@@ -21,7 +21,7 @@ strategy:
   delta_target: -0.2
   
   # Acceptable deviation from target delta when selecting options
-  delta_tolerance: 0.02
+  delta_tolerance: 0.01
   
   # Profit target as percentage of max profit (0.65 = exit at 65% of max profit)
   profit_target: 0.65
@@ -51,7 +51,7 @@ dates:
   start_date: "2024-01-02"
   
   # End date for the backtest period (YYYY-MM-DD)
-  end_date: "2024-01-05"
+  end_date: "2024-01-10"
 
 # Portfolio Settings
 portfolio:
@@ -59,13 +59,13 @@ portfolio:
   initial_capital: 100000
   
   # Maximum leverage allowed for the portfolio
-  max_leverage: 8
+  max_leverage: 12
   
   # Maximum percentage of Net Liquidation Value to deploy
   max_nlv_percent: 0.8
   
   # Maximum position size as percentage of portfolio
-  max_position_size_pct: 0.1
+  max_position_size_pct: 0.25
 
 # Logging Configuration
 logging:
