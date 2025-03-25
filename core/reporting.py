@@ -59,7 +59,7 @@ class ReportingSystem:
         if verification_dir:
             os.makedirs(verification_dir, exist_ok=True)
     
-    def generate_html_report(
+    def _generate_html_report_from_data(
         self, 
         equity_history: Dict[datetime, float], 
         performance_metrics: Dict[str, float],
@@ -67,7 +67,7 @@ class ReportingSystem:
         report_name: str = "strategy_report"
     ) -> str:
         """
-        Generate a full HTML report with performance metrics and charts.
+        Generate a full HTML report with performance metrics and charts from raw data.
         
         Args:
             equity_history: Dictionary of equity values by date
@@ -97,6 +97,69 @@ class ReportingSystem:
         
         return file_path
     
+    def generate_html_report(
+        self,
+        portfolio_or_equity_history,
+        strategy_name_or_metrics=None,
+        strategy_config_or_trades=None,
+        report_name="strategy_report"
+    ) -> str:
+        """
+        Generate an HTML report either from a portfolio object or from raw data.
+        This method detects the input type and calls the appropriate implementation.
+        
+        Args:
+            portfolio_or_equity_history: Either a Portfolio object or a dict of equity history
+            strategy_name_or_metrics: Either strategy name (str) or performance metrics (dict)
+            strategy_config_or_trades: Either strategy config (dict) or trades list
+            report_name: Base name for the report file
+            
+        Returns:
+            str: Path to the generated HTML report
+        """
+        # Check if first argument is a portfolio object
+        if hasattr(portfolio_or_equity_history, 'get_portfolio_value') or hasattr(portfolio_or_equity_history, 'positions'):
+            # It's a portfolio object
+            portfolio = portfolio_or_equity_history
+            strategy_name = strategy_name_or_metrics
+            strategy_config = strategy_config_or_trades
+            
+            self.logger.info(f"Generating HTML report for {strategy_name or 'strategy'}...")
+            
+            # Get equity history from portfolio
+            if hasattr(portfolio, 'get_equity_history_as_list'):
+                # Use standardized method that returns a list of tuples
+                equity_list = portfolio.get_equity_history_as_list()
+                equity_history = {date: float(value) for date, value in equity_list}
+            elif hasattr(portfolio, 'equity_history'):
+                # Convert any non-standard types to simple floats
+                equity_history = {date: float(value) for date, value in portfolio.equity_history.items()}
+            else:
+                # Empty history if none available
+                equity_history = {}
+            
+            # Get performance metrics
+            if hasattr(portfolio, 'get_performance_metrics'):
+                performance_metrics = portfolio.get_performance_metrics()
+            else:
+                performance_metrics = {}
+            
+            # Get trade history
+            if hasattr(portfolio, 'get_trade_history'):
+                trades = portfolio.get_trade_history()
+            else:
+                trades = []
+            
+            # Generate report with the collected data
+            return self._generate_html_report_from_data(equity_history, performance_metrics, trades, report_name)
+        else:
+            # It's raw data
+            equity_history = portfolio_or_equity_history
+            performance_metrics = strategy_name_or_metrics
+            trades = strategy_config_or_trades
+            
+            return self._generate_html_report_from_data(equity_history, performance_metrics, trades, report_name)
+    
     def generate_performance_chart(self, equity_history: Dict[datetime, float]) -> str:
         """
         Generate an equity curve chart and return as base64 encoded image.
@@ -109,7 +172,9 @@ class ReportingSystem:
         """
         # Sort equity history by date
         dates = sorted(equity_history.keys())
-        equity_values = [equity_history[date] for date in dates]
+        
+        # Ensure all values are simple floats
+        equity_values = [float(equity_history[date]) for date in dates]
         
         # Create the plot
         fig = Figure(figsize=(10, 6))
@@ -146,7 +211,9 @@ class ReportingSystem:
         """
         # Sort equity history by date
         dates = sorted(equity_history.keys())
-        equity_values = [equity_history[date] for date in dates]
+        
+        # Ensure all values are simple floats
+        equity_values = [float(equity_history[date]) for date in dates]
         
         # Calculate drawdown series
         equity_series = pd.Series(equity_values, index=dates)
@@ -459,8 +526,8 @@ class ReportingSystem:
         hedge_pnl = portfolio.get_hedge_pnl()
         
         output.write(f"Daily P&L: ${daily_return:.2f} ({daily_return_pct:.2%})\n")
-        output.write(f"  Option PnL: ${option_pnl:.2f}\n")
-        output.write(f"  Hedge PnL: ${hedge_pnl:.2f}\n")
+        output.write(f"  Option PnL: ${option_pnl['total']:.2f}\n")
+        output.write(f"  Hedge PnL: ${hedge_pnl['total']:.2f}\n")
         
         # Trade and Position Information
         open_trades = len(portfolio.get_open_positions())
@@ -674,18 +741,21 @@ class ReportingSystem:
             dict: Paths to generated reports
         """
         result = {}
+        date = current_date or datetime.now()
         
-        # ... existing code to generate HTML and other reports ...
-        
-        # Generate business logic verification files
-        if current_date:
+        try:
+            # Generate business logic verification files
             pre_trade_file = self.generate_business_logic_verification_file(
-                portfolio, current_date, pre_trade=True)
+                portfolio, date, pre_trade=True)
             post_trade_file = self.generate_business_logic_verification_file(
-                portfolio, current_date, pre_trade=False)
+                portfolio, date, pre_trade=False)
             
             result['pre_trade_file'] = pre_trade_file
             result['post_trade_file'] = post_trade_file
+        except Exception as e:
+            self.logger.error(f"Error generating verification files: {e}")
+            import traceback
+            self.logger.debug(traceback.format_exc())
         
         return result
     
