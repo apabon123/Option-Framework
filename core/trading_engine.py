@@ -554,84 +554,129 @@ class TradingEngine:
         
     def _init_components(self) -> None:
         """Initialize trading engine components."""
+        self.logger.info("=" * 60)
+        self.logger.info("TRADING ENGINE COMPONENT INITIALIZATION")
+        self.logger.info("=" * 60)
+        
         # Get configuration values from the portfolio section
         portfolio_config = self.config.get('portfolio', {})
         max_position_size = portfolio_config.get('max_position_size_pct', 0.05)
         
-        # Create portfolio first
-        self.portfolio = Portfolio(
-            initial_capital=self.initial_capital,
-            logger=self.logger
-        )
-        self.logger.info(f"Portfolio initialized with ${self.initial_capital:,.2f} capital")
-        
-        # Create risk manager
-        self.risk_manager = RiskManager(
-            config=self.config,
-            logger=self.logger
-        )
-        self.logger.info(f"Risk manager initialized with max position size: {max_position_size:.2%}")
-        
-        # Create strategy
-        self.strategy = self._create_strategy()
-        
-        # Create data manager
-        self.data_manager = DataManager(
-            config=self.config,
-            logger=self.logger
-        )
-        
-        # Create margin calculator
+        # Create margin calculator first, as it's needed by portfolio
         # First check margin_management config, then fall back to margin config
         margin_config = self.config.get('margin_management', self.config.get('margin', {}))
         margin_type = margin_config.get('margin_calculator_type', 'standard')
         
         # Log which margin calculator type we're using
-        self.logger.info(f"Using margin calculator type: {margin_type}")
+        self.logger.info(f"INITIALIZING MARGIN CALCULATOR: {margin_type}")
         
         if margin_type == 'option':
-            self.logger.info("[INIT] Using OptionMarginCalculator")
-            self.margin_calculator = OptionMarginCalculator(logger=self.logger)
+            self.margin_calculator = OptionMarginCalculator(
+                max_leverage=self.max_leverage,
+                logger=self.logger
+            )
             # Set logging manager separately
             self.margin_calculator.logging_manager = self.logging_manager
         elif margin_type == 'span':
-            self.logger.info("[INIT] Using SPANMarginCalculator")
             # Load SPAN parameters if provided in config
-            span_params = {}
-            if 'span_parameters' in self.config.get('margin', {}):
-                span_params = self.config.get('margin', {}).get('span_parameters', {})
-                
+            span_params = margin_config.get('span_parameters', {})
+            
+            # Create with standard parameters
             self.margin_calculator = SPANMarginCalculator(
-                logger=self.logger,
-                params=span_params
+                max_leverage=self.max_leverage,
+                initial_margin_percentage=span_params.get('initial_margin_percentage', 0.1),
+                price_move_pct=span_params.get('price_move_pct', 0.05),
+                vol_shift_pct=span_params.get('vol_shift_pct', 0.3),
+                logger=self.logger
             )
             # Set logging manager separately
             self.margin_calculator.logging_manager = self.logging_manager
         else:
-            self.logger.info("[INIT] Using standard MarginCalculator")
-            self.margin_calculator = MarginCalculator(logger=self.logger)  # Pass the logger instance
+            # Use standard margin calculator
+            self.margin_calculator = MarginCalculator(
+                max_leverage=self.max_leverage,
+                logger=self.logger
+            )
             # Set logging manager separately
             self.margin_calculator.logging_manager = self.logging_manager
         
-        # Connect margin calculator to portfolio (now portfolio is guaranteed to exist)
-        self.portfolio.set_margin_calculator(self.margin_calculator)
+        # Create portfolio with the margin calculator
+        self.logger.info("INITIALIZING PORTFOLIO")
+        self.portfolio = Portfolio(
+            initial_capital=self.initial_capital,
+            max_position_size_pct=max_position_size,
+            max_portfolio_delta=portfolio_config.get('max_portfolio_delta', 0.2),
+            logger=self.logger,
+            margin_calculator=self.margin_calculator
+        )
         
-        # Import and use the real margin manager from margin_management module
-        from core.margin_management import PortfolioRebalancer
-        
-        # Create and configure the real margin manager
-        self.logger.info("[INIT] Creating PortfolioRebalancer for margin management")
-        self.margin_manager = PortfolioRebalancer(
-            portfolio=self.portfolio,
+        # Create risk manager
+        self.logger.info("INITIALIZING RISK MANAGER")
+        self.risk_manager = RiskManager(
             config=self.config,
             logger=self.logger
         )
         
-        # Create reporting system
+        # Create data manager
+        self.logger.info("INITIALIZING DATA MANAGER")
+        self.data_manager = DataManager(
+            config=self.config,
+            logger=self.logger
+        )
+        
+        # Create strategy
+        self.logger.info("INITIALIZING STRATEGY")
+        self.strategy = self._create_strategy()
+        
+        # Create the reporting system
+        self.logger.info("INITIALIZING REPORTING SYSTEM")
         self.reporting_system = ReportingSystem(
             config=self.config,
-            logger=self.logger
+            portfolio=self.portfolio,
+            logger=self.logger,
+            trading_engine=self
         )
+        
+        # Set up portfolio rebalancer if margin management is enabled
+        margin_management_config = self.config.get('margin_management', {})
+        margin_management_enabled = margin_management_config.get('enabled', True)
+        
+        if margin_management_enabled:
+            self.logger.info("INITIALIZING PORTFOLIO REBALANCER")
+            self.margin_manager = PortfolioRebalancer(
+                portfolio=self.portfolio,
+                config=margin_management_config,
+                logger=self.logger
+            )
+        
+        # Set up hedging manager if hedging is enabled
+        hedging_config = self.config.get('hedging', {})
+        hedging_enabled = hedging_config.get('enabled', False)
+        
+        if hedging_enabled:
+            self.logger.info("INITIALIZING HEDGING MANAGER")
+            self.hedging_manager = HedgingManager(
+                portfolio=self.portfolio,
+                config=hedging_config,
+                logger=self.logger
+            )
+        
+        # Log summary of all initialized components
+        self.logger.info("=" * 60)
+        self.logger.info("INITIALIZATION COMPLETE - COMPONENT SUMMARY")
+        self.logger.info("-" * 60)
+        self.logger.info(f"Initial capital: ${self.initial_capital:,.2f}")
+        self.logger.info(f"Margin calculator: {type(self.margin_calculator).__name__}")
+        self.logger.info(f"Strategy: {type(self.strategy).__name__}")
+        self.logger.info(f"Margin management: {'Enabled' if hasattr(self, 'margin_manager') else 'Disabled'}")
+        self.logger.info(f"Hedging: {'Enabled' if hasattr(self, 'hedging_manager') else 'Disabled'}")
+        
+        # Log date range for the backtest
+        if self.start_date and self.end_date:
+            date_format = "%Y-%m-%d"
+            self.logger.info(f"Backtest period: {self.start_date.strftime(date_format)} to {self.end_date.strftime(date_format)}")
+        
+        self.logger.info("=" * 60)
         
     def _create_strategy(self) -> Strategy:
         """
