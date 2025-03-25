@@ -708,6 +708,12 @@ class TradingEngine:
             'report_path': None
         }
         
+        # First, make sure data is loaded
+        self.logger.info("Loading data for backtest...")
+        if not self.load_data():
+            self.logger.error("Failed to load data for backtest")
+            return results
+        
         # Get the dates for the backtest
         start_date = self.config.get('dates', {}).get('start_date')
         end_date = self.config.get('dates', {}).get('end_date')
