@@ -420,31 +420,31 @@ class MarginCalculator:
         # Calculate margin utilization if we have a total value
         margin_utilization = (total_margin / total_value) * 100 if total_value > 0 else 0
         
-        # Format the summary table with a more compact, attractive design
-        self.log_minimal("\n╔════════════════ MARGIN SUMMARY ════════════════╗")
-        self.log_minimal(f"║ Positions: {total_positions:<4}                              ║")
-        self.log_minimal(f"║ Position Value: ${total_value:<11,.2f}                 ║")
-        self.log_minimal(f"║ Total Margin Required: ${total_margin:<11,.2f}          ║")
-        self.log_minimal(f"║ Hedging Benefits: ${hedging_benefits:<11,.2f}             ║")
-        self.log_minimal(f"║ Margin Utilization: {margin_utilization:<6.2f}%                 ║")
+        # Format the summary table with plain ASCII characters
+        self.log_minimal("\n+------------------- MARGIN SUMMARY -------------------+")
+        self.log_minimal(f"| Positions: {total_positions:<4}                                |")
+        self.log_minimal(f"| Position Value: ${total_value:<11,.2f}                   |")
+        self.log_minimal(f"| Total Margin Required: ${total_margin:<11,.2f}            |")
+        self.log_minimal(f"| Hedging Benefits: ${hedging_benefits:<11,.2f}               |")
+        self.log_minimal(f"| Margin Utilization: {margin_utilization:<6.2f}%                   |")
         if hedging_benefits > 0:
             reduction_pct = (hedging_benefits/max(1, total_margin+hedging_benefits)*100)
-            self.log_minimal(f"║ Hedging Reduction: {reduction_pct:<6.2f}%                   ║")
-        self.log_minimal("╚═══════════════════════════════════════════════╝")
+            self.log_minimal(f"| Hedging Reduction: {reduction_pct:<6.2f}%                     |")
+        self.log_minimal("+-------------------------------------------------------+")
         
         # Only print position details for verbose logging with a more compact table
         if len(positions) <= 10 and self._should_log('verbose'):
-            self.log_verbose("\n📊 Position Margins:")
-            self.log_verbose("╔══════════════════╦════════════╦════════════╗")
-            self.log_verbose("║ Symbol           ║ Contracts  ║ Margin ($) ║")
-            self.log_verbose("╠══════════════════╬════════════╬════════════╣")
+            self.log_verbose("\nPosition Margins:")
+            self.log_verbose("+------------------+------------+------------+")
+            self.log_verbose("| Symbol           | Contracts  | Margin ($) |")
+            self.log_verbose("+------------------+------------+------------+")
             
             for symbol, position in positions.items():
                 contracts = position.contracts if hasattr(position, 'contracts') else 0
                 pos_margin = margin_by_position.get(symbol, 0)
-                self.log_verbose(f"║ {symbol:<16} ║ {contracts:<10} ║ {pos_margin:<10,.2f} ║")
+                self.log_verbose(f"| {symbol:<16} | {contracts:<10} | {pos_margin:<10,.2f} |")
                 
-            self.log_verbose("╚══════════════════╩════════════╩════════════╝")
+            self.log_verbose("+------------------+------------+------------+")
 
 
 class OptionMarginCalculator(MarginCalculator):
