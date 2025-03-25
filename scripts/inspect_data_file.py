@@ -85,15 +85,20 @@ def inspect_file(file_path, start_date=None, end_date=None, date_column="date"):
             print(f"\nWARNING: Date column '{date_column}' not found in data!")
             print(f"Available columns: {list(df.columns)}")
             
-            # Try to find a date-like column
-            date_like_columns = [col for col in df.columns if any(date_term in col.lower() for date_term in ['date', 'time', 'day', 'expiry', 'expiration'])]
-            if date_like_columns:
-                print(f"Possible date columns: {date_like_columns}")
-                date_column = date_like_columns[0]
-                print(f"Using '{date_column}' as date column for further analysis")
+            # Specifically check for DataDate as a common alternative
+            if 'DataDate' in df.columns:
+                print(f"Found 'DataDate' column, using it as date column")
+                date_column = 'DataDate'
             else:
-                print("No date-like columns found. Cannot perform date analysis.")
-                return 1
+                # Try to find a date-like column
+                date_like_columns = [col for col in df.columns if any(date_term in col.lower() for date_term in ['date', 'time', 'day', 'expiry', 'expiration'])]
+                if date_like_columns:
+                    print(f"Possible date columns: {date_like_columns}")
+                    date_column = date_like_columns[0]
+                    print(f"Using '{date_column}' as date column for further analysis")
+                else:
+                    print("No date-like columns found. Cannot perform date analysis.")
+                    return 1
         
         # Analyze the date column
         print(f"\n=== Date Column Analysis ===")

@@ -58,6 +58,11 @@ paths:
   
   # Directory for storing output logs and results
   output_dir: "C:\\Users\\alexp\\OneDrive\\Gdrive\\Trading\\Data Outputs\\scenario_results"
+  
+  # Column mappings
+  columns:
+    # Date column name in the data file
+    date: "DataDate"
 
 # Backtest Date Range
 dates:

@@ -200,8 +200,12 @@ def main():
                     df = pd.read_csv(input_file)
                     print(f"Successfully read data file. Shape: {df.shape}")
                     
-                    # Check date column
+                    # Check date column (try both 'date' and 'DataDate')
                     date_col = 'date'
+                    if date_col not in df.columns and 'DataDate' in df.columns:
+                        print(f"Date column 'date' not found, but 'DataDate' is available. Using 'DataDate' instead.")
+                        date_col = 'DataDate'
+                    
                     if date_col in df.columns:
                         print(f"Date column found: {date_col}")
                         
