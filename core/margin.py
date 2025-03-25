@@ -47,11 +47,6 @@ class MarginCalculator:
         Returns:
             bool: Whether the message should be logged
         """
-        # For now, just return True to allow all logging (workaround for issue)
-        return True
-        
-        # The code below is disabled temporarily due to comparison issues
-        """
         # If we don't have a logger, don't log
         if not self.logger:
             return False
@@ -82,19 +77,19 @@ class MarginCalculator:
             "debug": 3      # Debug details (most verbose)
         }
         
-        # Get priority numbers - ensure they are integers
+        # Get priority numbers - ensure they are integers for comparison
         current_level_priority = level_priority.get(component_level, 1)  # Default to standard
         message_level_priority = level_priority.get(level_name, 1)       # Default to standard
         
-        # Safety check to prevent type comparison errors
-        if not isinstance(current_level_priority, int) or not isinstance(message_level_priority, int):
+        # Log if message priority is less than or equal to the current level priority
+        # For example, if current_level_priority is 'verbose' (2), then we log 'minimal' (0), 'standard' (1), and 'verbose' (2)
+        # but not 'debug' (3)
+        try:
+            return message_level_priority <= current_level_priority
+        except TypeError:
             # If we encounter a type error, log a warning and default to allowing the log
             print(f"WARNING: Invalid log level type comparison: {type(current_level_priority)} vs {type(message_level_priority)}")
             return True
-        
-        # Log if message priority is less than or equal to the current level priority
-        return message_level_priority <= current_level_priority
-        """
     
     def log_minimal(self, message: str) -> None:
         """
@@ -395,6 +390,61 @@ class MarginCalculator:
         """
         result = self.calculate_portfolio_margin(positions)
         return result.get('total_margin', 0)
+
+    def log_margin_summary(self, positions: Dict[str, Position], margin_result: Dict[str, Any]) -> None:
+        """
+        Log a concise summary of margin calculations in tabular format.
+        Always shown regardless of log level setting.
+        
+        Args:
+            positions: Dictionary of positions keyed by symbol
+            margin_result: Result dictionary from calculate_portfolio_margin
+        """
+        if not self.logger:
+            return
+            
+        total_positions = len(positions)
+        total_margin = margin_result.get('total_margin', 0)
+        hedging_benefits = margin_result.get('hedging_benefits', 0)
+        margin_by_position = margin_result.get('margin_by_position', {})
+        
+        # Calculate total value of positions
+        total_value = 0
+        for position in positions.values():
+            if hasattr(position, 'position_value'):
+                total_value += position.position_value
+            elif hasattr(position, 'current_price') and hasattr(position, 'contracts'):
+                multiplier = 100 if hasattr(position, 'option_type') else 1
+                total_value += position.current_price * position.contracts * multiplier
+                
+        # Calculate margin utilization if we have a total value
+        margin_utilization = (total_margin / total_value) * 100 if total_value > 0 else 0
+        
+        # Format the summary table with a more compact, attractive design
+        self.log_minimal("\n╔════════════════ MARGIN SUMMARY ════════════════╗")
+        self.log_minimal(f"║ Positions: {total_positions:<4}                              ║")
+        self.log_minimal(f"║ Position Value: ${total_value:<11,.2f}                 ║")
+        self.log_minimal(f"║ Total Margin Required: ${total_margin:<11,.2f}          ║")
+        self.log_minimal(f"║ Hedging Benefits: ${hedging_benefits:<11,.2f}             ║")
+        self.log_minimal(f"║ Margin Utilization: {margin_utilization:<6.2f}%                 ║")
+        if hedging_benefits > 0:
+            reduction_pct = (hedging_benefits/max(1, total_margin+hedging_benefits)*100)
+            self.log_minimal(f"║ Hedging Reduction: {reduction_pct:<6.2f}%                   ║")
+        self.log_minimal("╚═══════════════════════════════════════════════╝")
+        
+        # Only print position details for verbose logging with a more compact table
+        if len(positions) <= 10 and self._should_log('verbose'):
+            self.log_verbose("\n📊 Position Margins:")
+            self.log_verbose("╔══════════════════╦════════════╦════════════╗")
+            self.log_verbose("║ Symbol           ║ Contracts  ║ Margin ($) ║")
+            self.log_verbose("╠══════════════════╬════════════╬════════════╣")
+            
+            for symbol, position in positions.items():
+                contracts = position.contracts if hasattr(position, 'contracts') else 0
+                pos_margin = margin_by_position.get(symbol, 0)
+                self.log_verbose(f"║ {symbol:<16} ║ {contracts:<10} ║ {pos_margin:<10,.2f} ║")
+                
+            self.log_verbose("╚══════════════════╩════════════╩════════════╝")
 
 
 class OptionMarginCalculator(MarginCalculator):
@@ -834,70 +884,21 @@ class SPANMarginCalculator(MarginCalculator):
 
     def _extract_underlying_symbol(self, position: Position) -> str:
         """
-        Extract the underlying symbol from a position.
-
+        Extract the underlying symbol from a position, especially for option positions.
+        
         Args:
-            position: Position to extract underlying from
-
+            position: Position object
+            
         Returns:
             str: Underlying symbol
         """
-        if isinstance(position, OptionPosition):
-            # Try to extract from symbol using common patterns
-            symbol = position.symbol
-
-            # For standard option symbols like "SPY240621C00410000"
-            if len(symbol) > 10:
-                # Attempt to extract underlying ticker
-                # This is a simplified approach - real option symbols might need more complex parsing
-                import re
-                match = re.match(r'([A-Z]+)', symbol)
-                if match:
-                    return match.group(1)
-
-            # If we can't extract from symbol, return first 3-5 chars as best guess
-            return symbol[:min(5, len(symbol))]
-
-        # For stock/ETF positions, just return the symbol
-        return position.symbol
-
-    def log_margin_summary(self, positions: Dict[str, Position], margin_result: Dict[str, Any]) -> None:
-        """
-        Log a concise summary of margin calculations.
-        Always shown regardless of log level setting.
-        
-        Args:
-            positions: Dictionary of positions keyed by symbol
-            margin_result: Result dictionary from calculate_portfolio_margin
-        """
-        if not self.logger:
-            return
+        # If the position has an 'underlying' attribute, use that
+        if hasattr(position, 'underlying') and position.underlying:
+            return position.underlying
             
-        total_positions = len(positions)
-        total_margin = margin_result.get('total_margin', 0)
-        hedging_benefits = margin_result.get('hedging_benefits', 0)
+        # Otherwise, use the symbol itself (likely a stock)
+        return position.symbol
         
-        # Calculate total value of positions
-        total_value = 0
-        for position in positions.values():
-            if hasattr(position, 'position_value'):
-                total_value += position.position_value
-            elif hasattr(position, 'current_price') and hasattr(position, 'contracts'):
-                multiplier = 100 if hasattr(position, 'option_type') else 1
-                total_value += position.current_price * position.contracts * multiplier
-                
-        # Calculate margin utilization if we have a total value
-        margin_utilization = (total_margin / total_value) * 100 if total_value > 0 else 0
-        
-        # Make this stand out in the logs
-        self.log_minimal("======= MARGIN CALCULATION SUMMARY =======")
-        self.log_minimal(f"Total positions: {total_positions}")
-        self.log_minimal(f"Total margin: ${total_margin:.2f}")
-        self.log_minimal(f"Hedging benefits: ${hedging_benefits:.2f}")
-        self.log_minimal(f"Position value: ${total_value:.2f}")
-        self.log_minimal(f"Margin utilization: {margin_utilization:.2f}%")
-        self.log_minimal("=========================================")
-    
     def calculate_portfolio_margin(self, positions: Dict[str, Position]) -> Dict[str, Any]:
         """
         Calculate portfolio margin for a collection of positions.
