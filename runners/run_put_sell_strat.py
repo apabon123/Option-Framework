@@ -18,7 +18,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from core.trading_engine import TradingEngine
 from strategies.put_sell_strat import PutSellStrat
-from simple_logging import SimpleLoggingManager
+from utils.simple_logging import SimpleLoggingManager
 
 
 def main():
@@ -48,6 +48,11 @@ def main():
         "--use-test-data",
         action="store_true",
         help="Use test data from ../tests/data/test_data.csv"
+    )
+    parser.add_argument(
+        "--skip-analysis",
+        action="store_true",
+        help="Skip input file analysis to speed up repeated runs"
     )
     args = parser.parse_args()
 
@@ -187,11 +192,12 @@ def main():
     end_date = config.get('dates', {}).get('end_date', 'Not specified')
     print(f"Backtest date range: {start_date} to {end_date}")
     
-    # Initialize the trading engine with the configuration
-    print("Initializing trading engine...")
     try:
+        # Initialize the trading engine with the configuration
+        print("Initializing trading engine...")
+        
         # Add debug code to analyze the data file
-        if 'paths' in config and 'input_file' in config['paths']:
+        if 'paths' in config and 'input_file' in config['paths'] and not args.skip_analysis:
             input_file = config['paths']['input_file']
             if os.path.exists(input_file):
                 print(f"\n=== Analyzing Input File: {input_file} ===")
@@ -239,7 +245,11 @@ def main():
             else:
                 print(f"WARNING: Input file does not exist: {input_file}")
         
-        engine = TradingEngine(config, logger)
+        # Create the PutSellStrat instance
+        strategy = PutSellStrat(config.get('strategy', {}), logger)
+        
+        # Create the TradingEngine with the strategy instance
+        engine = TradingEngine(config, strategy, logger)
         
         # Run the backtest
         print("\nStarting backtest...")
