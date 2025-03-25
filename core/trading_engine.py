@@ -466,35 +466,33 @@ class TradingEngine:
     - Reporting: Generating performance reports and visualizations
     """
     
-    def __init__(self, config: Dict[str, Any], strategy: Strategy = None, logger: Optional[logging.Logger] = None):
+    def __init__(self, config: Dict[str, Any], strategy=None, logger=None):
         """
-        Initialize the trading engine.
+        Initialize the TradingEngine with configuration.
         
         Args:
-            config: Configuration dictionary
-            strategy: Trading strategy instance (optional)
-            logger: Logger instance (optional)
+            config: Dictionary containing engine and strategy configurations
+            strategy: Optional strategy instance (if not provided, will be loaded based on config)
+            logger: Optional logger instance (if not provided, will be created)
         """
         # Store config
         self.config = config
         
-        # Set up logging
-        self.logger = logger or logging.getLogger('trading_engine')
-        self.logging_manager = None
-        # No need to call _setup_logging here as we're getting the logger as a parameter
-        
-        # Store the provided strategy instance
+        # Store the provided strategy instance for later use
         self._strategy_instance = strategy
         
-        # Initialize components to None (will be set in init_components)
-        self.data_manager = None
-        self.position_manager = None
-        self.portfolio = None
-        self.risk_manager = None
-        self.margin_calculator = None
-        self.margin_manager = None
-        self.reporting_system = None
-        self.strategy = None  # Will be initialized in _init_components
+        # Set up logging if not provided
+        if logger is None:
+            from utils.simple_logging import SimpleLoggingManager
+            self.logging_manager = SimpleLoggingManager()
+            self.logger = self.logging_manager.setup_logging(
+                config_dict=config,
+                verbose_console=True,
+                debug_mode=config.get('debug_mode', False)
+            )
+        else:
+            self.logger = logger
+            self.logging_manager = None
         
         # Initialize state variables
         self.data = None
@@ -511,17 +509,6 @@ class TradingEngine:
         # Initialize tracking metrics
         self.metrics_history = []
         
-        # Import SimpleLoggingManager for consistency across the application
-        from simple_logging import SimpleLoggingManager
-        
-        # Initialize the logging manager and logger
-        self.logging_manager = SimpleLoggingManager()
-        self.logger = self.logging_manager.setup_logging(
-            self.config,
-            verbose_console=True,
-            debug_mode=self.config.get('debug_mode', False)
-        )
-        
         # Extract main configuration parameters
         self.initial_capital = self.config.get('portfolio', {}).get('initial_capital', 100000)
         self.max_leverage = self.config.get('portfolio', {}).get('max_leverage', 1.0)
@@ -532,8 +519,12 @@ class TradingEngine:
         self.current_date = None
         
         # Initialize containers for data
+        self.portfolio = None  # Will be initialized in _init_components
+        self.risk_manager = None  # Will be initialized in _init_components
         self.strategy = None  # Will be initialized in _init_components
+        self.data_manager = None  # Will be initialized in _init_components
         self.margin_calculator = None  # Will be initialized in _init_components
+        self.margin_manager = None  # Will be initialized in _init_components
         self.reporting_system = None  # Will be initialized in _init_components
         self.hedging_manager = None  # Will be set up if hedging is enabled
         
