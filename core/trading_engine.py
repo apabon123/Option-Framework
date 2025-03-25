@@ -712,32 +712,87 @@ class TradingEngine:
         start_date = self.config.get('dates', {}).get('start_date')
         end_date = self.config.get('dates', {}).get('end_date')
         
+        self.logger.info(f"Configuration date range: {start_date} to {end_date}")
+        
         # Convert string dates to datetime objects if necessary
         if isinstance(start_date, str):
             start_date = datetime.strptime(start_date, '%Y-%m-%d')
+            self.logger.debug(f"Converted start_date string to datetime: {start_date}")
         if isinstance(end_date, str):
             end_date = datetime.strptime(end_date, '%Y-%m-%d')
+            self.logger.debug(f"Converted end_date string to datetime: {end_date}")
             
         # Generate trading dates in the specified range
+        self.logger.info("Retrieving available trading dates from data_manager...")
         trading_dates = self.data_manager.get_dates()
+        self.logger.info(f"Data manager returned {len(trading_dates)} trading dates")
+        
         if not trading_dates:
             self.logger.error("No trading dates available")
             return results
             
+        # Debug: print first few dates to see what format they're in
+        if trading_dates:
+            self.logger.info(f"First 5 trading dates: {trading_dates[:5]}")
+            self.logger.info(f"Date type: {type(trading_dates[0])}")
+        
         # Filter by date range
+        original_count = len(trading_dates)
         if start_date:
-            trading_dates = [d for d in trading_dates if d >= start_date]
+            # Check if we need to convert date format
+            if isinstance(trading_dates[0], str):
+                trading_dates = [datetime.strptime(d, '%Y-%m-%d') for d in trading_dates]
+                
+            # Try to handle different date object types
+            filtered_dates = []
+            for d in trading_dates:
+                # Convert to date object if it's a datetime
+                if isinstance(d, datetime):
+                    d_date = d.date()
+                elif isinstance(d, pd._libs.tslibs.timestamps.Timestamp):
+                    d_date = d.date()
+                else:
+                    d_date = d
+                    
+                # Compare with start_date (convert start_date to date if it's datetime)
+                start_date_for_compare = start_date.date() if isinstance(start_date, datetime) else start_date
+                if d_date >= start_date_for_compare:
+                    filtered_dates.append(d)
+                    
+            trading_dates = filtered_dates
+            self.logger.info(f"After start date filter: {len(trading_dates)} dates remain")
+            
         if end_date:
-            trading_dates = [d for d in trading_dates if d <= end_date]
+            # Handle different date object types for end date filtering
+            filtered_dates = []
+            for d in trading_dates:
+                # Convert to date object if it's a datetime
+                if isinstance(d, datetime):
+                    d_date = d.date()
+                elif isinstance(d, pd._libs.tslibs.timestamps.Timestamp):
+                    d_date = d.date()
+                else:
+                    d_date = d
+                    
+                # Compare with end_date (convert end_date to date if it's datetime)
+                end_date_for_compare = end_date.date() if isinstance(end_date, datetime) else end_date
+                if d_date <= end_date_for_compare:
+                    filtered_dates.append(d)
+                    
+            trading_dates = filtered_dates
+            self.logger.info(f"After end date filter: {len(trading_dates)} dates remain")
             
         trading_dates = sorted(trading_dates)
         
         if not trading_dates:
             self.logger.error("No trading dates in the specified range")
+            self.logger.error(f"Original date range had {original_count} dates before filtering")
             return results
             
         # Print backtest details
-        print(f"Backtest range: {trading_dates[0].strftime('%Y-%m-%d')} to {trading_dates[-1].strftime('%Y-%m-%d')}")
+        self.logger.info(f"Backtest range: {trading_dates[0]} to {trading_dates[-1]}")
+        self.logger.info(f"Total trading days: {len(trading_dates)}")
+        print(f"Backtest range: {trading_dates[0]} to {trading_dates[-1]}")
         print(f"Total trading days: {len(trading_dates)}")
         
         self.logger.info(f"Starting backtest with strategy: {self.strategy.name}")
