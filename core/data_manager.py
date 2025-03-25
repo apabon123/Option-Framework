@@ -361,8 +361,16 @@ class DataManager:
         if self.data is None:
             self.logger.error("No data loaded")
             return pd.DataFrame()
-            
-        return self.data[self.data['DataDate'] == date]
+        
+        # Get the date column name using the helper method
+        date_column = self._get_date_column_name()
+        
+        # Make sure the column exists in the data
+        if date_column not in self.data.columns:
+            self.logger.error(f"Date column '{date_column}' not found in data. Cannot filter by date.")
+            return pd.DataFrame()
+        
+        return self.data[self.data[date_column] == date]
     
     def get_option_data(
         self, 
@@ -443,6 +451,36 @@ class DataManager:
             
         self.underlying_data = underlying_data
     
+    def _get_date_column_name(self) -> str:
+        """
+        Helper method to determine the date column name based on configuration.
+        
+        Returns:
+            str: The name of the date column to use
+        """
+        date_column = 'DataDate'  # Default
+        
+        # Check if a custom date column is defined in the config
+        if hasattr(self, 'config') and self.config:
+            # First check paths.columns.date in config
+            if 'paths' in self.config and 'columns' in self.config['paths'] and 'date' in self.config['paths']['columns']:
+                date_column = self.config['paths']['columns']['date']
+                self.logger.debug(f"Using configured date column: {date_column}")
+        
+        # Make sure the column exists in the data if data is loaded
+        if hasattr(self, 'data') and self.data is not None and len(self.data) > 0:
+            if date_column not in self.data.columns:
+                self.logger.warning(f"Configured date column '{date_column}' not found in data. Columns: {list(self.data.columns)}")
+                # Fall back to default column names
+                if 'DataDate' in self.data.columns:
+                    date_column = 'DataDate'
+                    self.logger.info(f"Falling back to 'DataDate' column")
+                elif 'date' in self.data.columns:
+                    date_column = 'date'
+                    self.logger.info(f"Falling back to 'date' column")
+        
+        return date_column
+            
     def _log_data_info(self, df: pd.DataFrame) -> None:
         """
         Log information about the data and store in data_info.
@@ -450,10 +488,19 @@ class DataManager:
         Args:
             df: Data DataFrame
         """
-        # Count unique values
-        num_dates = df['DataDate'].nunique()
-        start_date = df['DataDate'].min()
-        end_date = df['DataDate'].max()
+        # Get the date column name
+        date_column = self._get_date_column_name()
+        
+        # Count unique values if date column exists
+        if date_column in df.columns:
+            num_dates = df[date_column].nunique()
+            start_date = df[date_column].min()
+            end_date = df[date_column].max()
+        else:
+            self.logger.warning(f"Date column '{date_column}' not found in data, cannot analyze date range")
+            num_dates = 0
+            start_date = None
+            end_date = None
         
         # Get option types if available
         if 'Type' in df.columns:
@@ -483,7 +530,11 @@ class DataManager:
         }
         
         # Log summary
-        self.logger.info(f"Loaded {len(df)} rows for {num_dates} dates from {start_date} to {end_date}")
+        if start_date and end_date:
+            self.logger.info(f"Loaded {len(df)} rows for {num_dates} dates from {start_date} to {end_date}")
+        else:
+            self.logger.info(f"Loaded {len(df)} rows")
+            
         if call_count + put_count > 0:
             self.logger.info(f"  {call_count} calls, {put_count} puts")
         if unique_symbols > 0:
@@ -498,8 +549,16 @@ class DataManager:
         """
         if self.data is None:
             return []
-            
-        return sorted(self.data['DataDate'].unique())
+        
+        # Get the date column name using the helper method
+        date_column = self._get_date_column_name()
+        
+        # Make sure the column exists in the data
+        if date_column not in self.data.columns:
+            self.logger.error(f"Date column '{date_column}' not found in data. Cannot retrieve trading dates.")
+            return []
+        
+        return sorted(self.data[date_column].unique())
     
     def get_symbols(self) -> List[str]:
         """
@@ -706,10 +765,13 @@ class DataManager:
                 if end_date and isinstance(end_date, str):
                     end_date = datetime.strptime(end_date, "%Y-%m-%d")
                     
+                # Get the date column name
+                date_column = self._get_date_column_name()
+                
                 # Get all dates in the data
-                if 'DataDate' in processed.columns:
-                    print("Extracting and sorting trading dates...")
-                    all_dates = processed['DataDate'].unique()
+                if date_column in processed.columns:
+                    print(f"Extracting and sorting trading dates from '{date_column}' column...")
+                    all_dates = processed[date_column].unique()
                     # Filter to dates within the configured range
                     if start_date:
                         all_dates = [d for d in all_dates if d >= start_date]
