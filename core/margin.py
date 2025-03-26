@@ -607,6 +607,9 @@ class SPANMarginCalculator(MarginCalculator):
         """
         super().__init__(max_leverage, logger)
         
+        # Set this flag to identify this as a SPAN calculator
+        self.is_delegating_to_span = True
+        
         # If params is provided, override individual parameters
         if params:
             max_leverage = params.get('max_leverage', max_leverage)

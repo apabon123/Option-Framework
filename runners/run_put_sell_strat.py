@@ -54,6 +54,11 @@ def main():
         action="store_true",
         help="Skip input file analysis to speed up repeated runs"
     )
+    parser.add_argument(
+        "--debug",
+        action="store_true",
+        help="Enable debug mode logging"
+    )
     args = parser.parse_args()
 
     # Load configuration
@@ -153,33 +158,60 @@ def main():
     config['strategy']['name'] = "PutSellStrat"
     print(f"Strategy set to: PutSellStrat")
 
-    # Enable verbose logging
+    # Setup logging configuration if not specified
     if 'logging' not in config:
         config['logging'] = {}
-    config['logging']['level'] = 'DEBUG'
-    config['logging']['file'] = True
     
-    # Enhanced component logging
-    if 'components' not in config['logging']:
-        config['logging']['components'] = {}
+    # Only set logging level if not specified in the config
+    if 'level' not in config['logging']:
+        config['logging']['level'] = 'INFO'
     
-    # Set margin logging to verbose
-    if 'margin' not in config['logging']['components']:
-        config['logging']['components']['margin'] = {}
-    config['logging']['components']['margin']['level'] = 'verbose'
+    # Ensure file logging is enabled
+    config['logging']['log_to_file'] = True
+
+    # Make sure component_levels exists
+    if 'component_levels' not in config['logging']:
+        config['logging']['component_levels'] = {}
+
+    # Only set component levels if not already specified
+    if 'margin' not in config['logging']['component_levels']:
+        config['logging']['component_levels']['margin'] = 'INFO'
     
-    # Set portfolio logging to verbose
-    if 'portfolio' not in config['logging']['components']:
-        config['logging']['components']['portfolio'] = {}
-    config['logging']['components']['portfolio']['level'] = 'verbose'
+    if 'portfolio' not in config['logging']['component_levels']:
+        config['logging']['component_levels']['portfolio'] = 'INFO'
+        
+    if 'trading' not in config['logging']['component_levels']:
+        config['logging']['component_levels']['trading'] = 'INFO'
+
+    # Make sure the margin_calculator_type is set to "span"
+    # This needs to be explicitly set to override any defaults
+    if 'margin_management' not in config:
+        config['margin_management'] = {}
+    config['margin_management']['margin_calculator_type'] = "span"
+    config['margin_management']['margin_calculation_method'] = "portfolio"
+    
+    print(f"Margin calculator type override: span (SPAN margin)")
+    print(f"Margin calculation method: portfolio")
+    
+    # Add explicit span parameters if needed
+    if 'includes' not in config:
+        config['includes'] = {}
+    
+    # Make sure we include the SPAN margin config
+    if 'margin_config' not in config['includes']:
+        config['includes']['margin_config'] = "../config/margin/span_margin.yaml"
+        print(f"Including SPAN margin config: {config['includes']['margin_config']}")
 
     # Configure logging
-    print("Setting up enhanced logging...")
+    print("Setting up logging...")
+    print(f"Logging level from config: {config['logging']['level']}")
+    print(f"Component levels: {config['logging']['component_levels']}")
+    
     logging_manager = SimpleLoggingManager()
     logger = logging_manager.setup_logging(
         config_dict=config,
         verbose_console=True,  # Enable verbose console output
-        debug_mode=True,       # Enable debug mode
+        debug_mode=args.debug, # Only enable debug mode if --debug flag is provided
         clean_format=False     # Include timestamp and level in logs
     )
     

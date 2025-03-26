@@ -120,6 +120,12 @@ class RiskManager:
             self.logger.warning(f"[RiskManager] Option price is 0 for {option_symbol}, cannot calculate position size")
             return 0
 
+        # Initialize margin variables - always define them to avoid reference errors
+        margin_config = self.config.get('margin_management', {})
+        margin_calculation_method = margin_config.get('margin_calculation_method', 'simple')
+        margin_calculator_type = margin_config.get('margin_calculator_type', 'span').lower()
+        margin_calculator = None
+        
         # Initialize margin_per_contract
         margin_per_contract = option_price * 100
         
@@ -156,10 +162,6 @@ class RiskManager:
             
             # Check if we have access to portfolio's margin calculator
             portfolio = portfolio_metrics.get('portfolio', None)
-            margin_calculator = None
-            margin_config = self.config.get('margin_management', {})
-            margin_calculation_method = margin_config.get('margin_calculation_method', 'simple')
-            margin_calculator_type = margin_config.get('margin_calculator_type', 'span').lower()
             use_portfolio_calculator = margin_config.get('use_portfolio_calculator', True)
             
             # Create a calculator based on configuration if we don't have one from the portfolio

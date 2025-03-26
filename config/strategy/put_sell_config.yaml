@@ -74,21 +74,31 @@ portfolio:
 
 # Logging Configuration
 logging:
-  # Logging level: DEBUG, INFO, WARNING, ERROR, CRITICAL
-  level: "INFO"
-  
-  # Whether to log to file
-  file: true
-  
-  # Component-specific logging
-  components:
-    # Margin calculation logging
-    margin:
-      level: "verbose"
-    
-    # Portfolio logging
-    portfolio:
-      level: "verbose"
+  level: "WARNING"
+  log_to_file: true
+  log_file_path: null  # will use default path
+  component_levels:
+    margin: "INFO"
+    portfolio: "WARNING"
+    trading: "WARNING"
+
+# Hedging Configuration
+hedging:
+  enabled: true
+  hedge_symbol: "SPY"  # Symbol to use for hedging
+  mode: "constant"  # constant delta hedging (vs ratio)
+  target_delta_ratio: 0.0  # Target delta ratio (0 = delta neutral)
+  delta_tolerance: 0.1  # Threshold for hedging (±10% from target)
+  hedge_with_underlying: true  # Use underlying for hedging
+
+# Margin Management
+margin_management:
+  enabled: true
+  high_margin_threshold: 0.90  # Rebalance at 90% usage
+  target_margin_threshold: 0.80  # Target 80% usage
+  margin_buffer_pct: 0.10  # 10% buffer
+  margin_calculator_type: "span"
+  margin_calculation_method: "portfolio"
 
 # Include other configurations
 includes:

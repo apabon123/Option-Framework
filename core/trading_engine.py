@@ -176,8 +176,13 @@ class LoggingManager:
         # Set up component-specific log levels
         self.component_log_levels = {}
 
-        # Check for component-specific logging settings in the new structure
-        if 'logging' in config_dict and 'components' in config_dict['logging']:
+        # First check for component-specific levels in the new 'component_levels' structure
+        if 'logging' in config_dict and 'component_levels' in config_dict['logging']:
+            for component, level in config_dict['logging']['component_levels'].items():
+                self.component_log_levels[component] = level
+                
+        # Check for component-specific logging settings in the older 'components' structure
+        elif 'logging' in config_dict and 'components' in config_dict['logging']:
             # Check for margin logging settings
             if 'margin' in config_dict['logging']['components']:
                 level = config_dict['logging']['components']['margin'].get(
@@ -696,7 +701,7 @@ class TradingEngine:
             self.logger.info(
                 f"  Hedge symbol: {self.hedging_manager.hedge_symbol}")
             self.logger.info(
-                f"  Delta hedging: {'Enabled' if self.hedging_manager.enable_delta_hedging else 'Disabled'}")
+                f"  Delta hedging: {'Enabled' if self.hedging_manager.enable_hedging else 'Disabled'}")
             self.logger.info(
                 f"  Target delta ratio: {hedging_config.get('target_delta_ratio', 0.0)}")
         else:

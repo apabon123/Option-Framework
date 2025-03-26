@@ -39,4 +39,11 @@ integrate_hedging: true
 # Logging Settings
 logging:
   # Level of detail for margin logs: "standard", "verbose", "debug"
-  level: "verbose" 
+  level: "standard"
+
+# Margin Management
+margin_management:
+  enabled: true
+  high_margin_threshold: 0.90  # Rebalance at 90% usage
+  target_margin_threshold: 0.80  # Target 80% usage
+  margin_buffer_pct: 0.10  # 10% buffer 

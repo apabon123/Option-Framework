@@ -8,8 +8,35 @@ that removes complex functionality causing issues.
 import os
 import logging
 import sys
+import io
 from datetime import datetime
 from typing import Dict, Any, Optional
+
+
+class UnicodeStreamHandler(logging.StreamHandler):
+    """A StreamHandler that can handle Unicode characters properly."""
+    
+    def __init__(self, stream=None):
+        """Initialize the handler with a stream that can handle Unicode."""
+        super().__init__(stream)
+        
+    def emit(self, record):
+        """
+        Emit a record with proper Unicode handling.
+        
+        Args:
+            record: LogRecord to emit
+        """
+        try:
+            msg = self.format(record)
+            stream = self.stream
+            # Replace problematic characters with their ASCII equivalents
+            msg = msg.replace("✓", "VERIFIED")
+            msg = msg.replace("✗", "FAILED")
+            stream.write(msg + self.terminator)
+            self.flush()
+        except Exception:
+            self.handleError(record)
 
 
 class SimpleLoggingManager:
@@ -54,7 +81,12 @@ class SimpleLoggingManager:
         # Set up component-specific log levels (always as strings)
         self.component_log_levels = {}
         
-        # Check for component-specific logging settings in the new structure
+        # Check for component-specific logging levels in component_levels (new preferred structure)
+        if 'logging' in config_dict and 'component_levels' in config_dict['logging']:
+            for component, level in config_dict['logging']['component_levels'].items():
+                self.component_log_levels[component] = level
+        
+        # Check for component-specific logging settings in the components structure (backward compatibility)
         if 'logging' in config_dict and 'components' in config_dict['logging']:
             # Check for margin logging settings
             if 'margin' in config_dict['logging']['components']:
@@ -88,8 +120,8 @@ class SimpleLoggingManager:
         for handler in logger.handlers[:]:
             logger.removeHandler(handler)
         
-        # Create console handler
-        ch = logging.StreamHandler()
+        # Create console handler with Unicode support
+        ch = UnicodeStreamHandler()
         ch.setLevel(log_level if verbose_console else logging.WARNING)
         
         # Create formatter
@@ -126,11 +158,12 @@ class SimpleLoggingManager:
         log_filename = f"{strategy_name}_{timestamp}.log"
         
         # Check if file logging is enabled in config
-        file_logging_enabled = config_dict.get('logging', {}).get('file', True)
+        file_logging_enabled = config_dict.get('logging', {}).get('log_to_file', 
+                                              config_dict.get('logging', {}).get('file', True))
         
         if file_logging_enabled:
             self.log_file = os.path.join(output_dir, log_filename)
-            fh = logging.FileHandler(self.log_file)
+            fh = logging.FileHandler(self.log_file, encoding='utf-8')
             fh.setLevel(log_level)
             fh.setFormatter(formatter)
             logger.addHandler(fh)
@@ -143,10 +176,56 @@ class SimpleLoggingManager:
         """Get the path to the current log file."""
         return self.log_file
     
-    # Simple implementations of required methods
     def should_log(self, component_name: str, level_name: str) -> bool:
-        """Always allow logging for simplicity."""
-        return True
+        """
+        Determine if a log message should be logged based on component and level.
+        
+        Args:
+            component_name: Name of the component (e.g., 'margin', 'portfolio')
+            level_name: Level to log at (e.g., 'minimal', 'standard', 'verbose')
+            
+        Returns:
+            bool: True if the message should be logged, False otherwise
+        """
+        # If the logger is None or disabled, don't log
+        if not self.logger or getattr(self.logger, 'disabled', False):
+            return False
+            
+        # Map level names to numeric priorities (higher = more verbose)
+        level_priorities = {
+            'minimal': 0,    # Always show these logs (WARNING+)
+            'standard': 1,   # Show in normal operation (INFO+)
+            'verbose': 2,    # Show in verbose mode (DEBUG+)
+            'debug': 3       # Show only in debug mode
+        }
+        
+        # Get the configured level for this component
+        component_level = self.get_component_log_level(component_name)
+        
+        # Map component_level string to logger levels
+        component_level_map = {
+            'minimal': logging.WARNING,
+            'standard': logging.INFO,
+            'verbose': logging.DEBUG,
+            'debug': logging.DEBUG
+        }
+        
+        # Map string levels to logging levels
+        string_to_log_level = {
+            'WARNING': logging.WARNING,
+            'INFO': logging.INFO,
+            'DEBUG': logging.DEBUG
+        }
+        
+        # If component_level is a string level (WARNING, INFO, DEBUG), use direct mapping
+        current_level = string_to_log_level.get(component_level, 
+                                               component_level_map.get(component_level, logging.INFO))
+        
+        # Compare with the message's level
+        message_level = component_level_map.get(level_name, logging.INFO)
+        
+        # Allow the message if its level is at least as important as the current level
+        return message_level >= current_level
         
     def get_component_log_level(self, component_name: str) -> str:
         """Get the component log level as a string."""

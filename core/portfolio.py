@@ -544,11 +544,11 @@ class Portfolio:
                 # Ensure we correctly identify SPAN calculators - improved logic
                 if "SPAN" in calc_class_name:
                     calc_display_name = "SPAN"
+                elif hasattr(self.margin_calculator, 'is_delegating_to_span') and self.margin_calculator.is_delegating_to_span:
+                    calc_display_name = "SPAN"
                 elif hasattr(self.margin_calculator, 'initial_margin_percentage'):
                     calc_display_name = "SPAN"
                 # Check if it's a basic calculator that delegates to SPAN
-                elif hasattr(self.margin_calculator, 'is_delegating_to_span'): 
-                    calc_display_name = "SPAN"
                 elif calc_class_name == "MarginCalculator" and self.has_option_positions():
                     # Override to SPAN for option portfolios - the MarginCalculator delegates to SPAN internally
                     calc_display_name = "SPAN"
@@ -557,9 +557,13 @@ class Portfolio:
                 else:
                     calc_display_name = "Basic"
                     
-                self.logger.debug(f"[Portfolio] Using {calc_display_name} for margin calculation")
+                if self.logger.level <= logging.INFO:
+                    self.logger.info(f"[Portfolio] Using {calc_display_name} margin calculation")
+                elif self.logger.level <= logging.DEBUG:
+                    self.logger.debug(f"[Portfolio] Using {calc_display_name} for margin calculation")
             else:
-                self.logger.debug("[Portfolio] No margin calculator set, using position-level calculation")
+                if self.logger.level <= logging.DEBUG:
+                    self.logger.debug("[Portfolio] No margin calculator set, using position-level calculation")
         
         # If margin calculator is available, use it for portfolio-level margin calculation
         if self.margin_calculator:
@@ -572,7 +576,7 @@ class Portfolio:
                 margin_by_position = margin_result.get('margin_by_position', {})
                 hedging_benefits = margin_result.get('hedging_benefits', 0)
                 
-                if hasattr(self, 'logger'):
+                if hasattr(self, 'logger') and self.logger.level <= logging.DEBUG:
                     # Get user-friendly calculator type name
                     calc_class_name = type(self.margin_calculator).__name__
                     calc_display_name = calc_class_name
@@ -591,7 +595,7 @@ class Portfolio:
                     self.logger.debug(f"[Portfolio] DEBUG - Margin calculator in metrics: {type(self.margin_calculator).__name__}")
                     if hasattr(self.margin_calculator, 'initial_margin_percentage'):
                         self.logger.debug(f"[Portfolio] DEBUG - Has initial_margin_percentage: {self.margin_calculator.initial_margin_percentage}")
-                    
+                
             except Exception as e:
                 # Log the error and fall back to position-level calculation
                 if hasattr(self, 'logger'):
@@ -1120,33 +1124,42 @@ class Portfolio:
                 calc_class_name = type(self.margin_calculator).__name__
                 calc_display_name = calc_class_name
                 
-                # Ensure we correctly identify SPAN calculators - improved logic
+                # Improved SPAN calculator detection logic
                 if "SPAN" in calc_class_name:
+                    calc_display_name = "SPAN"
+                elif hasattr(self.margin_calculator, 'is_delegating_to_span') and self.margin_calculator.is_delegating_to_span:
                     calc_display_name = "SPAN"
                 elif hasattr(self.margin_calculator, 'initial_margin_percentage'):
                     calc_display_name = "SPAN"
-                # Check if it's a basic calculator that delegates to SPAN
+                # Check if we have option positions - in this case we should use SPAN
                 elif calc_class_name == "MarginCalculator" and self.has_option_positions():
-                    # Override to SPAN for option portfolios - the MarginCalculator delegates to SPAN internally
+                    # Override to SPAN for option portfolios - assume the MarginCalculator delegates to SPAN internally
                     calc_display_name = "SPAN"
+                    # Add is_delegating_to_span attribute to remember this decision
+                    setattr(self.margin_calculator, 'is_delegating_to_span', True)
                 elif calc_class_name == "OptionMarginCalculator":
                     calc_display_name = "Option"
                 else:
                     calc_display_name = "Basic"
                 
                 if hasattr(self, 'logger'):
-                    self.logger.debug(f"[Portfolio] Using {calc_display_name} for margin calculation")
-                    # Add extra debug info to track the issue
-                    self.logger.debug(f"[Portfolio] DEBUG - Margin calculator actual class: {type(self.margin_calculator).__name__}")
-                    if hasattr(self.margin_calculator, 'initial_margin_percentage'):
-                        self.logger.debug(f"[Portfolio] DEBUG - Has initial_margin_percentage attribute")
+                    if self.logger.level <= logging.INFO:
+                        self.logger.info(f"[Portfolio] Using {calc_display_name} margin calculation")
+                    elif self.logger.level <= logging.DEBUG:
+                        self.logger.debug(f"[Portfolio] Using {calc_display_name} for margin calculation")
+                    # Add extra debug info only in debug level
+                    if self.logger.level <= logging.DEBUG:
+                        self.logger.debug(f"[Portfolio] DEBUG - Margin calculator actual class: {type(self.margin_calculator).__name__}")
+                        if hasattr(self.margin_calculator, 'initial_margin_percentage'):
+                            self.logger.debug(f"[Portfolio] DEBUG - Has initial_margin_percentage attribute")
                 
                 # Use the portfolio margin calculator's calculate_portfolio_margin method
                 margin_result = self.margin_calculator.calculate_portfolio_margin(self.positions)
-                if hasattr(self, 'logger'):
+                if hasattr(self, 'logger') and self.logger.level <= logging.DEBUG:
                     self.logger.debug(f"[Portfolio] Portfolio margin calculation using {calc_display_name}:")
                     self.logger.debug(f"  Total margin: ${margin_result.get('total_margin', 0):.2f}")
                     self.logger.debug(f"  Hedging benefits: ${margin_result.get('hedging_benefits', 0):.2f}")
+                    self.logger.debug(f"[Portfolio] DEBUG - Margin calculator in metrics: {calc_class_name}")
                     
                 # Return the total margin from the result
                 return margin_result.get('total_margin', 0)
