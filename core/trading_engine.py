@@ -19,6 +19,7 @@ from tabulate import tabulate
 import re
 import math
 import time
+import platform
 
 # Handle imports properly whether run as script or imported as module
 if __name__ == "__main__":
@@ -3009,6 +3010,21 @@ class TradingEngine:
             except ValueError:
                 self.logger.error(f"Could not parse date: {date_str}")
                 return None
+
+    def _log_environment_info(self):
+        """Log information about the execution environment."""
+        import platform
+        import sys
+        import pandas as pd
+        import numpy as np
+        
+        self.logger.info("EXECUTION ENVIRONMENT:")
+        self.logger.info(f"  Python version: {sys.version.split()[0]}")
+        self.logger.info(f"  OS: {platform.system()} {platform.version()}")
+        self.logger.info(f"  Pandas version: {pd.__version__}")
+        self.logger.info(f"  NumPy version: {np.__version__}")
+        
+        self.logger.info("-" * 80)
 
 
 if __name__ == "__main__":
