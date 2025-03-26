@@ -468,41 +468,36 @@ class TradingEngine:
     
     def __init__(self, config: Dict[str, Any], strategy=None, logger=None):
         """
-        Initialize the TradingEngine with configuration.
+        Initialize the Trading Engine.
         
         Args:
-            config: Dictionary containing engine and strategy configurations
-            strategy: Optional strategy instance (if not provided, will be loaded based on config)
-            logger: Optional logger instance (if not provided, will be created)
+            config: Configuration dictionary
+            strategy: Optional strategy instance (will be created from config if not provided)
+            logger: Optional logger instance
         """
-        # Store config
+        # Store config and other initialization parameters
         self.config = config
-        
-        # Store the provided strategy instance for later use
         self._strategy_instance = strategy
         
-        # Set up logging if not provided
-        if logger is None:
-            from utils.simple_logging import SimpleLoggingManager
-            self.logging_manager = SimpleLoggingManager()
-            self.logger = self.logging_manager.setup_logging(
-                config_dict=config,
-                verbose_console=True,
-                debug_mode=config.get('debug_mode', False)
-            )
-        else:
-            self.logger = logger
-            self.logging_manager = None
+        # Set up logging first
+        self.logging_manager = LoggingManager()
+        self.logger = logger or self.logging_manager.setup_logging(
+            config, 
+            verbose_console=config.get('logging', {}).get('verbose_console', True),
+            debug_mode=config.get('logging', {}).get('debug_mode', False),
+            clean_format=config.get('logging', {}).get('clean_format', True)
+        )
         
-        # Initialize state variables
-        self.data = None
-        self.trade_history = []
-        self.performance_history = []
+        # Introduce ourselves to the logs
+        self.logger.info("=" * 80)
+        self.logger.info("TRADING ENGINE INITIALIZATION")
+        self.logger.info("=" * 80)
         
-        # Setup initial default params
-        self.dates_trading = []
-        self.start_date = None
-        self.end_date = None
+        # Print the library versions in use
+        self._log_environment_info()
+        
+        # Initialize data containers
+        self.daily_data = None
         self.current_date = None
         self.days_processed = 0  # Track number of days processed
         
@@ -543,6 +538,10 @@ class TradingEngine:
             'risk_metrics': {}
         }
         
+        # Tracking dictionaries for daily activities
+        self.today_added_positions = {}  # Track positions added today by symbol
+        self.today_signals_by_symbol = {}  # Track signals generated today by symbol
+        
         # Store starting time for performance tracking
         self.start_time = time.time()
         
@@ -570,29 +569,47 @@ class TradingEngine:
         # Log which margin calculator type we're using
         self.logger.info(f"INITIALIZING MARGIN CALCULATOR: {margin_type}")
         
-        if margin_type == 'option':
+        if margin_type.lower() == 'option':
             self.margin_calculator = OptionMarginCalculator(
                 max_leverage=self.max_leverage,
                 logger=self.logger
             )
             # Set logging manager separately
             self.margin_calculator.logging_manager = self.logging_manager
-        elif margin_type == 'span':
+        elif margin_type.lower() == 'span':
             # Load SPAN parameters if provided in config
             span_params = margin_config.get('span_parameters', {})
             
-            # Create with standard parameters
+            # Extract explicit SPAN parameters from config
+            price_move_pct = span_params.get('price_move_pct', 0.05)
+            vol_shift_pct = span_params.get('vol_shift_pct', 0.3)
+            initial_margin_percentage = span_params.get('initial_margin_percentage', 0.1)
+            hedge_credit_rate = span_params.get('hedge_credit_rate', 0.8)
+            min_scan_risk_percentage = span_params.get('min_scan_risk_percentage', 0.25)
+            max_margin_to_premium_ratio = span_params.get('max_margin_to_premium_ratio', 20.0)
+            
+            self.logger.info(f"Creating SPAN margin calculator with parameters:")
+            self.logger.info(f"  Initial margin %: {initial_margin_percentage:.2%}")
+            self.logger.info(f"  Price move %: {price_move_pct:.2%}")
+            self.logger.info(f"  Vol shift %: {vol_shift_pct:.2%}")
+            self.logger.info(f"  Hedge credit: {hedge_credit_rate:.2%}")
+            
+            # Create with parameters from config
             self.margin_calculator = SPANMarginCalculator(
                 max_leverage=self.max_leverage,
-                initial_margin_percentage=span_params.get('initial_margin_percentage', 0.1),
-                price_move_pct=span_params.get('price_move_pct', 0.05),
-                vol_shift_pct=span_params.get('vol_shift_pct', 0.3),
+                initial_margin_percentage=initial_margin_percentage,
+                price_move_pct=price_move_pct,
+                vol_shift_pct=vol_shift_pct,
+                hedge_credit_rate=hedge_credit_rate,
+                min_scan_risk_percentage=min_scan_risk_percentage,
+                max_margin_to_premium_ratio=max_margin_to_premium_ratio,
                 logger=self.logger
             )
             # Set logging manager separately
             self.margin_calculator.logging_manager = self.logging_manager
         else:
             # Use standard margin calculator
+            self.logger.warning(f"Using basic margin calculator - this is not recommended for options trading")
             self.margin_calculator = MarginCalculator(
                 max_leverage=self.max_leverage,
                 logger=self.logger
@@ -610,12 +627,36 @@ class TradingEngine:
             margin_calculator=self.margin_calculator
         )
         
-        # Create risk manager
+        # Check if hedging is enabled in the configuration
+        hedging_enabled = self.config.get('hedging', {}).get('enabled', False)
+        
+        # Initialize the hedging manager if hedging is enabled - do this before risk manager
+        if hedging_enabled:
+            self.logger.info("INITIALIZING HEDGING MANAGER (ENABLED)")
+            hedging_config = self.config.get('hedging', {})
+            self.hedging_manager = HedgingManager(
+                portfolio=self.portfolio,
+                config=hedging_config,
+                logger=self.logger
+            )
+            self.logger.info(f"  Hedge symbol: {self.hedging_manager.hedge_symbol}")
+            self.logger.info(f"  Delta hedging: {'Enabled' if self.hedging_manager.enable_delta_hedging else 'Disabled'}")
+            self.logger.info(f"  Target delta ratio: {hedging_config.get('target_delta_ratio', 0.0)}")
+        else:
+            self.hedging_manager = None
+            self.logger.info("HEDGING: DISABLED")
+        
+        # Create risk manager AFTER hedging manager
         self.logger.info("INITIALIZING RISK MANAGER")
         self.risk_manager = RiskManager(
             config=self.config,
             logger=self.logger
         )
+        
+        # Connect hedging manager to risk manager if both exist
+        if self.hedging_manager and hasattr(self.risk_manager, 'hedging_manager'):
+            self.risk_manager.hedging_manager = self.hedging_manager
+            self.logger.info("[TradingEngine] Connected hedging manager to risk manager for integrated margin calculation")
         
         # Create data manager
         self.logger.info("INITIALIZING DATA MANAGER")
@@ -637,29 +678,37 @@ class TradingEngine:
             trading_engine=self
         )
         
-        # Set up portfolio rebalancer if margin management is enabled
-        margin_management_config = self.config.get('margin_management', {})
-        margin_management_enabled = margin_management_config.get('enabled', True)
-        
-        if margin_management_enabled:
-            self.logger.info("INITIALIZING PORTFOLIO REBALANCER")
+        # Initialize margin management AFTER hedging manager is created
+        if 'margin_management' in self.config:
+            self.logger.info("INITIALIZING MARGIN MANAGER")
             self.margin_manager = PortfolioRebalancer(
-                portfolio=self.portfolio,
-                config=margin_management_config,
-                logger=self.logger
+                self.portfolio,
+                self.config.get('margin_management', {}),
+                self.logger
             )
+            
+            # Connect the hedging manager to the margin manager if both exist
+            if self.hedging_manager and hasattr(self.margin_manager, 'hedging_manager'):
+                self.margin_manager.hedging_manager = self.hedging_manager
+                self.logger.info("[TradingEngine] Connected hedging manager to margin manager for integrated margin calculation")
+        else:
+            self.margin_manager = None
+            self.logger.info("MARGIN MANAGEMENT: DISABLED")
         
-        # Set up hedging manager if hedging is enabled
-        hedging_config = self.config.get('hedging', {})
-        hedging_enabled = hedging_config.get('enabled', False)
-        
-        if hedging_enabled:
-            self.logger.info("INITIALIZING HEDGING MANAGER")
-            self.hedging_manager = HedgingManager(
-                portfolio=self.portfolio,
-                config=hedging_config,
-                logger=self.logger
-            )
+        # Double-check all connections for proper integration
+        if self.hedging_manager:
+            # Verify risk manager connection
+            if hasattr(self.risk_manager, 'hedging_manager') and self.risk_manager.hedging_manager == self.hedging_manager:
+                self.logger.info("✓ Hedging integration with risk manager: VERIFIED")
+            else:
+                self.logger.warning("✗ Hedging integration with risk manager: FAILED - Connection not established")
+                
+            # Verify margin manager connection if it exists
+            if self.margin_manager:
+                if hasattr(self.margin_manager, 'hedging_manager') and self.margin_manager.hedging_manager == self.hedging_manager:
+                    self.logger.info("✓ Hedging integration with margin manager: VERIFIED")
+                else:
+                    self.logger.warning("✗ Hedging integration with margin manager: FAILED - Connection not established")
         
         # Log summary of all initialized components
         self.logger.info("=" * 60)
@@ -668,8 +717,8 @@ class TradingEngine:
         self.logger.info(f"Initial capital: ${self.initial_capital:,.2f}")
         self.logger.info(f"Margin calculator: {type(self.margin_calculator).__name__}")
         self.logger.info(f"Strategy: {type(self.strategy).__name__}")
-        self.logger.info(f"Margin management: {'Enabled' if hasattr(self, 'margin_manager') else 'Disabled'}")
-        self.logger.info(f"Hedging: {'Enabled' if hasattr(self, 'hedging_manager') else 'Disabled'}")
+        self.logger.info(f"Margin management: {'Enabled' if self.margin_manager else 'Disabled'}")
+        self.logger.info(f"Hedging: {'Enabled' if self.hedging_manager else 'Disabled'}")
         
         # Log date range for the backtest
         if self.start_date and self.end_date:
@@ -930,6 +979,10 @@ class TradingEngine:
         """
         # Set the current date for use in other methods
         self.current_date = current_date
+        
+        # Reset today's tracking
+        self.today_added_positions = {}
+        self.today_closed_positions = {}
         
         # Get data for this trading day
         daily_data = self.data_manager.get_data_for_date(current_date)
@@ -1986,92 +2039,140 @@ class TradingEngine:
                     
     def _execute_trading_activities(self, current_date: datetime, daily_data: pd.DataFrame) -> None:
         """
-        Execute trading activities for the current trading day.
-        
-        This method orchestrates:
-        - Margin management and rebalancing
-        - Generating trading signals from the strategy
-        - Evaluating and filtering signals
-        - Executing valid signals
-        - Adjusting hedge positions
+        Execute trading activities for the current day, following a structured flow:
+        1. Pre-trade portfolio assessment 
+        2. Strategy signal generation
+        3. Signal execution with integrated hedging
+        4. Exit condition checks
+        5. Explicit hedging adjustments
         
         Args:
-            current_date: The current trading date
-            daily_data: Data for the current trading day
+            current_date: Current trading date
+            daily_data: DataFrame of market data for the current day
         """
-        try:
-            # Convert daily data to market data dictionary for easier access
-            market_data_by_symbol = self.data_manager.get_market_data_by_symbol(daily_data)
-            
-            # --------------------------------------------------------
-            # 1. MARGIN MANAGEMENT - Rebalance if needed
-            # --------------------------------------------------------
+        start_time = time.time()
+        
+        # --------------------------------------------------------
+        # 1. PRE-TRADE PORTFOLIO ASSESSMENT
+        # --------------------------------------------------------
+        # Log the current portfolio state
+        self.logger.info("PRE-TRADE PORTFOLIO ASSESSMENT:")
+        self.logger.info("-" * 50)
+        
+        # Execute pre-trade activities
+        self._log_pre_trade_summary(current_date, daily_data)
+        
+        # PORTFOLIO REBALANCING (Margin Management)
+        # Check portfolio margin status and rebalance if needed
+        if self.margin_manager:
             self.logger.info("MARGIN MANAGEMENT:")
             self.logger.info("-" * 50)
             
-            # Use the data_manager method which already exists
+            # Convert daily data to market data by symbol
             market_data_by_symbol = self.data_manager.get_market_data_by_symbol(daily_data)
-            rebalance_result = self.margin_manager.rebalance_portfolio(current_date, market_data_by_symbol)
             
-            if rebalance_result.get('rebalanced', False):
-                self.logger.info("[TradingEngine] Portfolio rebalanced")
-                # Log additional rebalance details if available
-                if 'positions_closed' in rebalance_result:
-                    self.logger.info(f"[TradingEngine] Positions closed: {rebalance_result['positions_closed']}")
-                if 'margin_reduced' in rebalance_result:
-                    self.logger.info(f"[TradingEngine] Margin reduced: ${rebalance_result['margin_reduced']:.2f}")
+            # Check if portfolio needs rebalancing
+            analysis = self.margin_manager.analyze_margin_status(current_date)
+            
+            if analysis.get('needs_rebalancing', False):
+                self.logger.info(f"Portfolio rebalancing needed - utilization {analysis['margin_utilization']:.2%}")
+                self.logger.info(f"Margin to reduce: ${analysis['margin_to_reduce']:.2f}")
+                
+                # Execute rebalancing
+                rebalance_result = self.margin_manager.rebalance_portfolio(current_date, market_data_by_symbol)
+                
+                if rebalance_result.get('rebalanced', False):
+                    self.logger.info(f"Portfolio rebalanced: {rebalance_result['positions_closed']} positions closed")
+                    self.logger.info(f"Total margin freed: ${rebalance_result['margin_freed']:.2f}")
+                    self.logger.info(f"New utilization: {rebalance_result['final_utilization']:.2%}")
             else:
-                self.logger.info("No rebalancing needed, margin utilization within limits")
+                self.logger.info(f"No rebalancing needed - utilization {analysis['margin_utilization']:.2%}")
+        
+        # --------------------------------------------------------
+        # 2. STRATEGY SIGNAL GENERATION
+        # --------------------------------------------------------
+        self.logger.info("STRATEGY SIGNALS:")
+        self.logger.info("-" * 50)
+        
+        # Only generate signals if we have a strategy
+        if not self.strategy:
+            self.logger.warning("No strategy defined, skipping signal generation")
+            return
+        
+        # Generate signals for the day
+        signals = self.strategy.generate_signals(
+            current_date,
+            daily_data
+        )
+        
+        # --------------------------------------------------------
+        # 3. SIGNAL EXECUTION WITH INTEGRATED HEDGING
+        # --------------------------------------------------------
+        if signals:
+            self.logger.info(f"[Strategy] Generated {len(signals)} signals for {current_date.strftime('%Y-%m-%d')}")
             
-            # --------------------------------------------------------
-            # 2. SIGNAL GENERATION - Get signals from strategy
-            # --------------------------------------------------------
-            self.logger.info("STRATEGY SIGNALS:")
+            self.logger.info("SIGNAL EXECUTION:")
             self.logger.info("-" * 50)
             
-            signals = self.strategy.generate_signals(
-                current_date,
-                daily_data
+            # Execute signals (includes margin checks and hedging)
+            self._execute_signals(signals, daily_data, current_date)
+        else:
+            self.logger.info(f"[Strategy] No trading signals for {current_date.strftime('%Y-%m-%d')}")
+        
+        # --------------------------------------------------------
+        # 4. EXIT CONDITION CHECK - Review existing positions 
+        # --------------------------------------------------------
+        self.logger.info("EXIT CONDITION CHECK:")
+        self.logger.info("-" * 50)
+        
+        self._check_exit_conditions(daily_data, current_date)
+        
+        # --------------------------------------------------------
+        # 5. EXPLICIT HEDGING - Apply additional hedging if needed
+        # --------------------------------------------------------
+        if self.hedging_manager and self.hedging_manager.enable_hedging:
+            self.logger.info("PORTFOLIO HEDGING:")
+            self.logger.info("-" * 50)
+            
+            # Convert to market data by symbol for hedging
+            market_data_by_symbol = self.data_manager.get_market_data_by_symbol(daily_data)
+            
+            # Analyze current portfolio delta exposure
+            self.logger.info("[Hedging] Analyzing portfolio exposure")
+            delta_summary = self.hedging_manager.calculate_hedge_requirements(daily_data, current_date)
+            
+            # Log the portfolio exposure
+            if delta_summary:
+                self.logger.info(f"[Hedging] Portfolio delta: {delta_summary.get('portfolio_delta', 0):.4f}")
+                self.logger.info(f"[Hedging] Portfolio delta ($): ${delta_summary.get('portfolio_dollar_delta', 0):.2f}")
+                self.logger.info(f"[Hedging] Target delta ratio: {delta_summary.get('target_delta_ratio', 0):.2f}")
+                self.logger.info(f"[Hedging] Required delta adjustment: {delta_summary.get('required_delta_adjustment', 0):.4f}")
+            
+            # Apply hedging based on config
+            self.hedging_manager.apply_hedging(
+                current_date=current_date,
+                market_data=daily_data
             )
             
-            if signals:
-                self.logger.info(f"[Strategy] Generated {len(signals)} signals for {current_date.strftime('%Y-%m-%d')}")
-                
-                # --------------------------------------------------------
-                # 3. SIGNAL EXECUTION - Open/close positions based on signals
-                # --------------------------------------------------------
-                self.logger.info("SIGNAL EXECUTION:")
-                self.logger.info("-" * 50)
-                
-                self._execute_signals(signals, daily_data, current_date)
-            else:
-                self.logger.info(f"[Strategy] No trading signals for {current_date.strftime('%Y-%m-%d')}")
-            
-            # --------------------------------------------------------
-            # 4. EXIT CONDITION CHECK - Review existing positions 
-            # --------------------------------------------------------
-            self.logger.info("EXIT CONDITION CHECK:")
-            self.logger.info("-" * 50)
-            
-            self._check_exit_conditions(daily_data, current_date)
-            
-            # --------------------------------------------------------
-            # 5. HEDGING - Apply hedging if enabled
-            # --------------------------------------------------------
-            if self.hedging_manager:
-                self.logger.info("PORTFOLIO HEDGING:")
-                self.logger.info("-" * 50)
-                
-                # Apply hedging based on config
-                self.hedging_manager.apply_hedging(
-                    current_date=current_date,
-                    market_data=daily_data
-                )
+            # Check if hedging was applied
+            current_hedge = self.hedging_manager.get_hedge_position()
+            if current_hedge:
+                self.logger.info(f"[Hedging] Current hedge: {current_hedge.contracts} shares of {current_hedge.symbol}")
+                self.logger.info(f"[Hedging] Hedge delta: {current_hedge.current_delta:.4f}")
         
-        except Exception as e:
-            self.logger.error(f"Error during trading activities: {e}")
-            import traceback
-            self.logger.error(traceback.format_exc())
+        # --------------------------------------------------------
+        # 6. POST-TRADE SUMMARY - Log final portfolio state
+        # --------------------------------------------------------
+        self.logger.info("POST-TRADE PORTFOLIO ASSESSMENT:")
+        self.logger.info("-" * 50)
+        
+        # Log post-trade portfolio summary
+        self._log_post_trade_summary(current_date)
+        
+        # Calculate and log execution time
+        end_time = time.time()
+        execution_time = end_time - start_time
+        self.logger.info(f"Day execution completed in {execution_time:.2f} seconds")
     
     def _check_exit_conditions(self, daily_data: pd.DataFrame, current_date: datetime) -> None:
         """
@@ -2136,23 +2237,21 @@ class TradingEngine:
                     
     def _execute_signals(self, signals: List[Dict[str, Any]], daily_data: pd.DataFrame, current_date: datetime) -> None:
         """
-        Execute trading signals.
+        Execute trading signals with integrated margin and hedging calculation.
         
         Args:
-            signals: List of trading signals to execute
-            daily_data: Data for the current trading day
-            current_date: Current trading date
+            signals: List of trading signals from strategy
+            daily_data: DataFrame of market data
+            current_date: Current simulation date
         """
-        # Convert daily data to market data dictionary for easier access
-        market_data_by_symbol = self.data_manager.get_market_data_by_symbol(daily_data)
-        
-        # Log that we're executing signals
         self.logger.info("[TradeManager] Executing trading signals")
         
-        # Initialize today's added positions dictionary
-        self.today_added_positions = {}
+        # Convert daily data to market data by symbol for margin impact checks
+        market_data_by_symbol = self.data_manager.get_market_data_by_symbol(daily_data)
         
         # Process each signal
+        executed_signals = []
+        
         for signal in signals:
             action = signal.get('action', '').lower()  # Normalize action to lowercase
             symbol = signal.get('symbol')
@@ -2176,7 +2275,14 @@ class TradingEngine:
                 quantity = signal.get('quantity', 0)
                 price = signal.get('price')
                 position_type = signal.get('position_type', 'option')  # Default to option
-                instrument_data = signal.get('instrument_data')
+                instrument_data = signal.get('instrument_data', {})
+                
+                # Get market data for the symbol
+                market_data = market_data_by_symbol.get(symbol, {})
+                
+                # Ensure we have instrument data - use market data if needed
+                if not instrument_data and market_data:
+                    instrument_data = market_data
                 
                 # Extract execution data if present
                 execution_data = {'date': current_date}
@@ -2186,21 +2292,91 @@ class TradingEngine:
                 # Debug info
                 self.logger.debug(f"Opening position: {symbol} {quantity} {'short' if is_short else 'long'} {position_type}")
                 
-                # Position sizing check for options
+                # STEP 1: HEDGING CALCULATION - Determine hedge position before margin check
+                hedge_position = None
+                if position_type.lower() == 'option' and self.hedging_manager and hasattr(self.hedging_manager, 'create_theoretical_hedge_position'):
+                    # Create temporary option position for hedging calculation
+                    self.logger.info(f"[TradeManager] Calculating hedge position for {symbol}")
+                    
+                    # Format option_data for hedging manager
+                    option_data = {
+                        'symbol': symbol,
+                        'OptionSymbol': symbol,
+                        'price': price,
+                        'Delta': instrument_data.get('Delta', 0),
+                        'Gamma': instrument_data.get('Gamma', 0),
+                        'Theta': instrument_data.get('Theta', 0),
+                        'Vega': instrument_data.get('Vega', 0),
+                        'Strike': instrument_data.get('Strike', 0),
+                        'Expiration': instrument_data.get('Expiration', None),
+                        'UnderlyingSymbol': instrument_data.get('UnderlyingSymbol', 'SPY'),
+                        'UnderlyingPrice': instrument_data.get('UnderlyingPrice', 0),
+                        'Type': 'put' if 'P' in symbol else 'call'
+                    }
+                    
+                    # Create a temporary position
+                    from core.position import OptionPosition
+                    temp_position = OptionPosition(
+                        symbol=symbol,
+                        option_data={
+                            'Type': option_data['Type'],
+                            'Strike': option_data['Strike'],
+                            'Expiration': option_data['Expiration'],
+                            'UnderlyingSymbol': option_data['UnderlyingSymbol'],
+                            'UnderlyingPrice': option_data['UnderlyingPrice']
+                        },
+                        contracts=quantity,
+                        entry_price=price,
+                        current_price=price,
+                        is_short=is_short,
+                        logger=self.logger
+                    )
+                    
+                    # Set greeks on the position
+                    temp_position.current_delta = option_data['Delta']
+                    temp_position.current_gamma = option_data['Gamma']
+                    temp_position.current_theta = option_data['Theta']
+                    temp_position.current_vega = option_data['Vega']
+                    
+                    # Get hedge position
+                    hedge_position = self.hedging_manager.create_theoretical_hedge_position(temp_position)
+                    
+                    if hedge_position:
+                        self.logger.info(f"[TradeManager] Hedge required: {hedge_position.contracts} shares of {hedge_position.symbol}")
+                        self.logger.info(f"  Hedge delta: {hedge_position.current_delta}")
+                
+                # STEP 2: POSITION SIZING - Adjusted to consider hedging
                 if symbol and position_type.lower() == 'option':
-                    # Position sizing logic (unchanged)
+                    # If we have a hedge position, pass it to position sizing 
+                    # by adding it to the instrument data
+                    if hedge_position:
+                        instrument_data['hedge_position'] = {
+                            'symbol': hedge_position.symbol,
+                            'contracts': hedge_position.contracts,
+                            'delta': hedge_position.current_delta,
+                            'price': hedge_position.current_price,
+                            'is_short': hedge_position.is_short
+                        }
+                
+                    # Perform position sizing with hedging consideration
                     sizing_result = self._position_sizing(symbol, quantity, price, is_short, instrument_data, daily_data)
                     
                     if sizing_result and 'position_size' in sizing_result:
                         quantity = sizing_result['position_size']
-                        self.logger.debug(f"Position sizing for {symbol}: {quantity} contracts")
+                        self.logger.debug(f"Position sizing for {symbol}: Original={signal.get('quantity', 0)}, Calculated={quantity}")
+                    
+                    # If quantity is 0 or None after position sizing, skip this position
+                    if not quantity:
+                        self.logger.warning(f"Position sizing returned zero quantity for {symbol}, skipping")
+                        continue
+                    
+                    # STEP 3: MARGIN IMPACT CHECK - With hedging integrated
+                    # Check margin impact before executing 
+                    if not self._check_position_margin_impact(symbol, quantity, price, market_data_by_symbol):
+                        self.logger.warning(f"Skipping {symbol} due to margin constraints")
+                        continue
                 
-                # Check margin impact before executing the trade
-                if position_type.lower() == 'option' and not self._check_position_margin_impact(symbol, quantity, price, market_data_by_symbol):
-                    self.logger.warning(f"Skipping {symbol} due to margin constraints")
-                    continue
-                
-                # Execute the open position
+                # STEP 4: EXECUTE THE POSITION
                 if instrument_data:
                     # Add position
                     position = self.portfolio.add_position(
@@ -2217,7 +2393,7 @@ class TradingEngine:
                     # Enhanced logging
                     if position:
                         position_value = price * quantity * 100 if position_type == 'option' else price * quantity
-                        self.logger.info(f"[TradeManager] Added {quantity} {'contracts' if position_type == 'option' else 'shares'} of {symbol}")
+                        self.logger.info(f"Added position: {quantity} {'short' if is_short else 'long'} {position_type} {symbol} @ {price}")
                         self.logger.info(f"  Position value: ${position_value:,.2f}")
                         
                         # Store in today's added positions
@@ -2229,6 +2405,38 @@ class TradingEngine:
                             'position_type': position_type,  # Include position type in tracking
                             'is_short': is_short  # Store position direction for sign adjustment
                         }
+                        
+                        # STEP 5: ADD HEDGE POSITION IF NEEDED
+                        if hedge_position and self.hedging_manager:
+                            # Scale hedge position based on actual quantity
+                            if quantity != signal.get('quantity', 0) and signal.get('quantity', 0) > 0:
+                                scale_factor = quantity / signal.get('quantity', 0)
+                                hedge_position.contracts = int(hedge_position.contracts * scale_factor)
+                            
+                            # Add the hedge position to the portfolio
+                            self.logger.info(f"[TradeManager] Adding hedge position: {hedge_position.contracts} shares of {hedge_position.symbol}")
+                            
+                            hedge_price = market_data_by_symbol.get(hedge_position.symbol, {}).get('MidPrice', hedge_position.current_price)
+                            
+                            hedge_instrument_data = {
+                                'Symbol': hedge_position.symbol,
+                                'Type': 'stock',
+                                'Delta': 1.0 if not hedge_position.is_short else -1.0,
+                                'UnderlyingSymbol': hedge_position.symbol,
+                                'UnderlyingPrice': hedge_price
+                            }
+                            
+                            # Add hedge position to portfolio
+                            self.portfolio.add_position(
+                                symbol=hedge_position.symbol,
+                                instrument_data=hedge_instrument_data,
+                                quantity=hedge_position.contracts,
+                                price=hedge_price,
+                                position_type='stock',
+                                is_short=hedge_position.is_short,
+                                execution_data=execution_data,
+                                reason=f"Hedge for {symbol}"
+                            )
                 else:
                     self.logger.warning(f"Cannot open position {symbol}: No instrument data available")
             
@@ -2249,7 +2457,28 @@ class TradingEngine:
                     
                 # Check if we have the position
                 if symbol in self.portfolio.positions:
-                    # Close position
+                    # STEP 1: FIND LINKED HEDGE POSITION
+                    # Look for corresponding hedge position before closing
+                    hedge_position = None
+                    if self.hedging_manager:
+                        # Get the position to be closed
+                        position_to_close = self.portfolio.positions[symbol]
+                        
+                        # Check if this is an option position
+                        if hasattr(position_to_close, 'position_type') and position_to_close.position_type == 'option':
+                            # Try to find corresponding hedge
+                            underlying_symbol = position_to_close.underlying_symbol if hasattr(position_to_close, 'underlying_symbol') else 'SPY'
+                            
+                            # If we have a position in the underlying, it might be a hedge
+                            if underlying_symbol in self.portfolio.positions:
+                                potential_hedge = self.portfolio.positions[underlying_symbol]
+                                
+                                # Check if this is a likely hedge (opposite delta sign)
+                                if (position_to_close.current_delta * potential_hedge.current_delta < 0):
+                                    hedge_position = potential_hedge
+                                    self.logger.info(f"[TradeManager] Found corresponding hedge position for {symbol}: {underlying_symbol}")
+                    
+                    # STEP 2: CLOSE THE MAIN POSITION
                     pnl = self.portfolio.remove_position(
                         symbol=symbol,
                         quantity=quantity,
@@ -2261,8 +2490,30 @@ class TradingEngine:
                     # Categorize the reason for closing
                     close_category = self._categorize_close_reason(reason)
                     
-                    # Enhanced logging for PnL with reason - include both category and full reason
+                    # Enhanced logging for PnL with reason
                     self.logger.info(f"[TradeManager] Closed position - Reason: {close_category} - Detail: {reason} - P&L: ${pnl:,.2f}")
+                    
+                    # STEP 3: CLOSE THE HEDGE POSITION IF FOUND
+                    if hedge_position and hedge_position.symbol in self.portfolio.positions:
+                        # Calculate how much of the hedge to close
+                        hedge_close_qty = None  # Default to close all
+                        if quantity is not None:
+                            # Calculate proportion of position closed
+                            original_qty = self.portfolio.positions[symbol].contracts
+                            proportion = quantity / original_qty if original_qty > 0 else 1.0
+                            hedge_close_qty = int(hedge_position.contracts * proportion)
+                        
+                        # Close hedge position
+                        hedge_price = market_data_by_symbol.get(hedge_position.symbol, {}).get('MidPrice', hedge_position.current_price)
+                        hedge_pnl = self.portfolio.remove_position(
+                            symbol=hedge_position.symbol,
+                            quantity=hedge_close_qty,
+                            price=hedge_price,
+                            execution_data=execution_data,
+                            reason=f"Closing hedge for {symbol}"
+                        )
+                        
+                        self.logger.info(f"[TradeManager] Closed hedge position {hedge_position.symbol} - P&L: ${hedge_pnl:,.2f}")
                 else:
                     self.logger.warning(f"Cannot close position {symbol} - not found in portfolio")
                     
@@ -2274,7 +2525,7 @@ class TradingEngine:
         self.logger.debug(f"Portfolio after signals: ${portfolio_metrics['portfolio_value']:,.2f}, {len(self.portfolio.positions)} positions")
         self.logger.debug(f"  Cash balance: ${portfolio_metrics['cash_balance']:,.2f}")
         self.logger.debug(f"  Delta: {portfolio_metrics['delta']:.2f} (${portfolio_metrics['dollar_delta']:,.2f})")
-    
+
     def _categorize_close_reason(self, reason: str) -> str:
         """
         Categorize the reason for closing a position into standard categories.
@@ -2520,177 +2771,231 @@ class TradingEngine:
 
     def _check_position_margin_impact(self, symbol: str, contracts: int, price: float, current_market_data: Dict):
         """
-        Check the margin impact of adding a new position and its associated hedge.
+        Check if adding a position would have acceptable margin impact.
+        
+        This method evaluates the margin impact of adding a new position,
+        considering both the position itself and its potential hedge.
         
         Args:
-            symbol: Option symbol
+            symbol: Instrument symbol
             contracts: Number of contracts
             price: Current price
             current_market_data: Market data dictionary
             
         Returns:
-            bool: True if the position can be added, False otherwise
+            bool: Whether position can be added (True if acceptable margin impact)
         """
-        # Get the instrument data
-        instrument_data = current_market_data.get(symbol, {})
-        
-        # Estimate position margin requirement
-        # For simplicity, use a conservative estimate for short options
-        underlying_price = instrument_data.get('UnderlyingPrice', 0)
-        if underlying_price <= 0:
-            self.logger.warning(f"Cannot estimate margin impact - no underlying price for {symbol}")
-            return True  # Default to allowing the position if we can't calculate
+        # Skip for zero contracts
+        if contracts <= 0:
+            return True
             
-        # Get delta to estimate hedge requirements
+        # If no margin manager, we can't properly check margin impact
+        if self.margin_manager is None:
+            # Get risk manager's last margin calculation if available
+            margin_per_contract = 0
+            if hasattr(self.risk_manager, '_last_margin_per_contract') and self.risk_manager._last_margin_per_contract > 0:
+                margin_per_contract = self.risk_manager._last_margin_per_contract
+                self.logger.warning(f"[MarginCheck] No margin manager available, using risk manager margin per contract: ${margin_per_contract:.2f}")
+                
+                # Calculate margin impact using a simplified approach
+                position_margin = margin_per_contract * contracts
+                portfolio_value = self.portfolio.get_portfolio_value()
+                current_margin = self.portfolio.calculate_margin_requirement()
+                total_new_margin = current_margin + position_margin
+                margin_utilization = total_new_margin / portfolio_value if portfolio_value > 0 else 1.0
+                
+                # Use high margin threshold from config or default to 85%
+                high_margin_threshold = self.config.get('margin_management', {}).get('high_margin_threshold', 0.85)
+                can_add = margin_utilization < high_margin_threshold
+                
+                self.logger.warning(f"[MarginCheck] Simplified margin check (no margin manager):")
+                self.logger.warning(f"  Position margin: ${position_margin:.2f}")
+                self.logger.warning(f"  New total margin: ${total_new_margin:.2f}")
+                self.logger.warning(f"  Margin utilization: {margin_utilization:.2%}")
+                self.logger.warning(f"  High threshold: {high_margin_threshold:.2%}")
+                self.logger.warning(f"  Can add position: {can_add}")
+                
+                return can_add
+            else:
+                # No margin information available, allow with caution
+                self.logger.warning(f"[MarginCheck] No margin manager or risk manager margin data available")
+                self.logger.warning(f"[MarginCheck] ALLOWING POSITION WITH CAUTION - RECOMMEND ENABLING MARGIN MANAGEMENT")
+                return True
+        
+        # Get data for the instrument if available
+        instrument_data = {}
+        if symbol in current_market_data:
+            instrument_data = current_market_data[symbol]
+        
+        # Get delta for hedging calculation
         delta = instrument_data.get('Delta', 0)
         
-        # For short options, margin is typically 20% of underlying plus option premium
-        is_short = self.config.get('strategy', {}).get('is_short', True)
+        # For hedging, we need to know the underlying
+        underlying_symbol = instrument_data.get('UnderlyingSymbol', None)
+        if not underlying_symbol and 'P' in symbol:
+            # Try to extract underlying from option symbol
+            parts = symbol.split('P')
+            if len(parts) > 0:
+                potential_underlying = ''.join(c for c in parts[0] if c.isalpha())
+                if potential_underlying:
+                    underlying_symbol = potential_underlying
+                    
+        # Get the underlying price if available
+        underlying_price = 0
+        if underlying_symbol and underlying_symbol in current_market_data:
+            underlying_price = current_market_data[underlying_symbol].get('MidPrice', 0)
+        elif 'UnderlyingPrice' in instrument_data:
+            underlying_price = instrument_data.get('UnderlyingPrice', 0)
         
-        # Calculate estimated margin
-        if is_short:
-            option_price = instrument_data.get('MidPrice', price)
-            option_value = option_price * contracts * 100  # Option contract value
-            
-            # Estimate margin requirement (simplified)
-            margin_requirement = option_value + (underlying_price * contracts * 100 * 0.2)
-        else:
-            # For long options, margin is just the premium
-            margin_requirement = price * contracts * 100
-            
-        # Calculate estimated hedge delta
-        target_delta_ratio = self.config.get('hedging', {}).get('target_delta_ratio', 0.1)
-        hedge_delta = 0
+        # Calculate position delta for hedging
+        position_delta = delta * contracts
         
-        if is_short:
-            # For short options, we need to hedge in the opposite direction
-            # Simplified hedge calculation
-            position_delta = delta * contracts  # Delta is typically negative for puts, positive for calls
-            hedge_delta = -position_delta  # Hedge in opposite direction
-        
-        # Get the margin_per_contract if available from the risk manager
-        margin_per_contract = 0
-        # Check if we have the margin_per_contract from the risk manager
-        if hasattr(self.risk_manager, '_last_margin_per_contract') and self.risk_manager._last_margin_per_contract > 0:
-            margin_per_contract = self.risk_manager._last_margin_per_contract
-            self.logger.info(f"[TradeManager] Using margin per contract from risk manager: ${margin_per_contract:.2f}")
-        
-        # Check margin impact with the margin manager
+        # Create a position data dictionary for margin manager
         position_data = {
             'symbol': symbol,
             'contracts': contracts,
             'price': price,
-            'margin_requirement': margin_requirement,
             'underlying_price': underlying_price,
             'instrument_data': instrument_data,
-            'is_short': is_short
+            'is_short': True  # Assuming short for options selling
         }
         
-        # Add margin_per_contract if we have it from the risk manager
-        if margin_per_contract > 0:
+        # Get the margin_per_contract if available from the risk manager
+        if hasattr(self.risk_manager, '_last_margin_per_contract') and self.risk_manager._last_margin_per_contract > 0:
+            margin_per_contract = self.risk_manager._last_margin_per_contract
             position_data['margin_per_contract'] = margin_per_contract
+            self.logger.info(f"[MarginCheck] Using margin per contract from risk manager: ${margin_per_contract:.2f}")
         
-        can_add, details = self.margin_manager.can_add_position_with_hedge(position_data, hedge_delta)
+        # Determine if position can be added with margin impact, including hedge
+        can_add, margin_details = self.margin_manager.can_add_position_with_hedge(
+            position_data, 
+            hedge_delta=-position_delta  # Hedge in opposite direction of position delta
+        )
         
-        if not can_add:
-            self.logger.warning(f"Cannot add position {symbol} - margin impact too high")
-            self.logger.info(f"  Current margin utilization: {details['current_utilization']:.2%}")
-            self.logger.info(f"  New margin utilization would be: {details['new_utilization']:.2%}")
-            self.logger.info(f"  Threshold: {details['threshold']:.2%}")
+        # Log the margin impact details
+        if can_add:
+            self.logger.info(f"[MarginCheck] Position margin impact is acceptable:")
+        else:
+            self.logger.warning(f"[MarginCheck] Position margin impact is too high:")
             
+        self.logger.info(f"  Current margin utilization: {margin_details['current_utilization']:.2%}")
+        self.logger.info(f"  New margin utilization: {margin_details['new_utilization']:.2%}")
+        self.logger.info(f"  Additional margin required: ${margin_details['additional_margin']:.2f}")
+        
         return can_add
 
-    def _process_day(self, current_date: datetime, daily_data: pd.DataFrame) -> None:
+    def _process_day(self, date_obj) -> Dict[str, Any]:
         """
         Process a single trading day.
         
         Args:
-            current_date: Current trading date
-            daily_data: DataFrame of market data for the current day
+            date_obj: Date to process
+            
+        Returns:
+            dict: Results for the day
         """
-        # Convert daily data to market data dictionary for easier access
-        market_data_by_symbol = self.data_manager.get_market_data_by_symbol(daily_data)
+        # Set current date
+        self.current_date = date_obj
         
-        # Update portfolio with current market data
-        self.portfolio.update_positions(current_date, market_data_by_symbol)
+        # Reset tracking dictionaries for daily activities
+        self.today_added_positions = {}
+        self.today_signals_by_symbol = {}
         
-        # Check if margin rebalancing is needed before making any new trades
-        # This helps ensure we have margin capacity for new positions
-        # Use the market_data_by_symbol that was already created above
-        rebalance_result = self.margin_manager.rebalance_portfolio(current_date, market_data_by_symbol)
+        # Format date for display
+        date_str = date_obj.strftime(self.date_format)
         
-        if rebalance_result.get('rebalanced', False):
-            self.logger.info("[TradingEngine] Portfolio rebalanced")
-            # Log additional rebalance details if available
-            if 'positions_closed' in rebalance_result:
-                self.logger.info(f"[TradingEngine] Positions closed: {rebalance_result['positions_closed']}")
-            if 'margin_reduced' in rebalance_result:
-                self.logger.info(f"[TradingEngine] Margin reduced: ${rebalance_result['margin_reduced']:.2f}")
+        # Log start of day processing
+        self.logger.info("=" * 80)
+        self.logger.info(f"PROCESSING TRADING DAY: {date_str}")
+        self.logger.info("=" * 80)
         
-        # Extract filtered candidates based on strategy criteria
-        candidates = self.strategy.filter_candidates(daily_data)
-        
-        # Check portfolio capacity for new positions
-        can_add_position = self.portfolio.can_add_position()
-        
-        # Generate and execute signals
-        signals = []
-        if can_add_position and len(candidates) > 0:
-            # Select the best candidate
-            selected_symbol, selected_data = self.strategy.select_best_candidate(candidates)
-            self.logger.info(f"Selected best candidate: {selected_symbol}")
-            
-            # Get current price
-            current_price = selected_data.get('MidPrice', 0)
-            
-            # Validate basic parameters
-            is_valid, reason = self.strategy.validate_trade_params(selected_data)
-            
-            if not is_valid:
-                self.logger.warning(f"Trade validation failed: {reason}")
-            elif current_price <= 0:
-                self.logger.warning(f"Invalid price ({current_price}) for {selected_symbol}")
-            else:
-                # Calculate position size
-                contracts = self.strategy.calculate_position_size(
-                    selected_data,
-                    self.portfolio.get_portfolio_value()
-                )
+        # Get daily data for this date
+        try:
+            self.daily_data = self.data_manager.get_data_for_date(date_obj)
+            if self.daily_data is None or len(self.daily_data) == 0:
+                self.logger.warning(f"No data available for {date_str}, skipping day")
+                return {'status': 'skipped', 'reason': 'no_data'}
                 
-                # Check margin impact before executing the trade
-                if self._check_position_margin_impact(selected_symbol, contracts, current_price, market_data_by_symbol):
-                    # Create a signal
-                    signal = {
-                        'symbol': selected_symbol,
-                        'action': 'sell' if self.config.get('strategy', {}).get('is_short', True) else 'buy',
-                        'quantity': contracts,
-                        'price': current_price,
-                        'reason': 'New position'
-                    }
-                    signals.append(signal)
-                else:
-                    self.logger.info(f"Skipping {selected_symbol} due to margin constraints")
+            # Convert the daily data to market_data_by_symbol for easier access
+            market_data_by_symbol = self.data_manager.get_market_data_by_symbol(self.daily_data)
+            
+            # Log number of symbols with data
+            self.logger.info(f"Data available for {len(market_data_by_symbol)} symbols on {date_str}")
+        except Exception as e:
+            self.logger.error(f"Error getting data for {date_str}: {str(e)}")
+            self.logger.exception("Stack trace:")
+            return {'status': 'error', 'reason': 'data_error', 'error': str(e)}
         
-        # Execute signals
-        for signal in signals:
-            self._execute_signal(signal, market_data_by_symbol.get(signal['symbol'], {}))
+        # Update existing positions with current market data
+        try:
+            self._update_positions_with_market_data(market_data_by_symbol)
+        except Exception as e:
+            self.logger.error(f"Error updating positions: {str(e)}")
+            self.logger.exception("Stack trace:")
+            return {'status': 'error', 'reason': 'position_update_error', 'error': str(e)}
         
-        # Monitor existing positions
-        exit_signals = self.strategy.check_exit_conditions(self.portfolio, market_data_by_symbol)
+        # Execute trading activities
+        try:
+            # Execute all trading activities for the day
+            self._execute_trading_activities(date_obj, market_data_by_symbol)
+        except Exception as e:
+            self.logger.error(f"Error executing trading day: {str(e)}")
+            self.logger.exception("Stack trace:")
+            return {'status': 'error', 'reason': 'execution_error', 'error': str(e)}
         
-        # Execute exit signals
-        for exit_signal in exit_signals:
-            self._execute_signal(exit_signal, market_data_by_symbol.get(exit_signal['symbol'], {}))
-        
-        # Apply hedging adjustments
-        if self.config.get('hedging', {}).get('enabled', False):
-            self.hedging_manager.apply_hedging(current_date, market_data_by_symbol)
-        
-        # Log portfolio status
-        self._log_portfolio_status()
-        
-        # Mark end of day for all positions (for daily P&L tracking)
-        self.portfolio.mark_end_of_day()
+        # Update portfolio metrics at end of day
+        try:
+            portfolio_metrics = self.portfolio.get_portfolio_metrics()
+            self.logger.info("POST-TRADE SUMMARY:")
+            self.logger.info(f"Portfolio value: ${portfolio_metrics['portfolio_value']:,.2f}")
+            
+            # Calculate and log P&L
+            if hasattr(self, 'prev_portfolio_value'):
+                daily_pnl = portfolio_metrics['portfolio_value'] - self.prev_portfolio_value
+                daily_return_pct = daily_pnl / self.prev_portfolio_value if self.prev_portfolio_value > 0 else 0
+                self.logger.info(f"Daily P&L: ${daily_pnl:,.2f} ({daily_return_pct:.2%})")
+            
+            # Store current value for next day's comparison
+            self.prev_portfolio_value = portfolio_metrics['portfolio_value']
+            
+            # Get and log margin metrics
+            margin_details = portfolio_metrics.get('margin_details', {})
+            margin_calculator_type = margin_details.get('calculator_type', 'Basic')
+            total_margin = margin_details.get('total_margin', 0)
+            max_leverage = margin_details.get('max_leverage', 1.0)
+            
+            self.logger.info("MARGIN DETAILS:")
+            self.logger.info(f"  Calculator: {margin_calculator_type}")
+            self.logger.info(f"  Max leverage: {max_leverage:.2f}x")
+            self.logger.info(f"  Total margin requirement: ${total_margin:,.2f}")
+            
+            if total_margin > 0:
+                margin_utilization = total_margin / portfolio_metrics['portfolio_value']
+                self.logger.info(f"  Margin utilization: {margin_utilization:.2%}")
+            
+            # Track metrics for this day
+            day_metrics = {
+                'date': date_str,
+                'portfolio_value': portfolio_metrics['portfolio_value'],
+                'margin_requirement': total_margin,
+                'open_positions': len(self.portfolio.positions),
+                'delta_exposure': portfolio_metrics.get('portfolio_delta', 0),
+                'delta_as_pct': portfolio_metrics.get('delta_percentage', 0)
+            }
+            
+            # Append to metrics history
+            self.metrics_history.append(day_metrics)
+            
+            # Increment days processed counter
+            self.days_processed += 1
+            
+            # Return success with day metrics
+            return {'status': 'success', 'metrics': day_metrics}
+            
+        except Exception as e:
+            self.logger.error(f"Error calculating portfolio metrics: {str(e)}")
+            self.logger.exception("Stack trace:")
+            return {'status': 'error', 'reason': 'metrics_error', 'error': str(e)}
 
     def _parse_date(self, date_str):
         """Parse date string to datetime object."""

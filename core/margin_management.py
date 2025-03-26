@@ -16,13 +16,11 @@ import copy
 
 class PortfolioRebalancer:
     """
-    Handles portfolio rebalancing based on margin constraints.
+    Manages portfolio margin utilization and rebalancing.
     
-    This class monitors portfolio margin usage and implements rebalancing
-    strategies when thresholds are exceeded, focusing on:
-    1. Rebalancing at 90% margin usage, bringing it down to 80%
-    2. Considering hedging impact for new positions
-    3. Using a structured approach to determine which positions to trim
+    This class provides tools for monitoring margin utilization, 
+    determining when to rebalance the portfolio, and evaluating
+    the impact of adding new positions.
     """
     
     def __init__(
@@ -72,6 +70,8 @@ class PortfolioRebalancer:
                     calc_display_name = "Basic"
                 
                 self.logger.info(f"[PortfolioRebalancer] Using portfolio's margin calculator: {calc_display_name}")
+        else:
+            self.logger.warning(f"[PortfolioRebalancer] No margin calculator available from portfolio")
         
         # Rebalance cooldown settings
         self.rebalance_cooldown_days = self.margin_config.get('rebalance_cooldown_days', 3)
@@ -85,13 +85,15 @@ class PortfolioRebalancer:
         # Initialize tracking variables
         self.rebalance_history = []
         
+        # Hedging manager reference - will be set by trading engine
+        self.hedging_manager = None
+        
         # Log initialization
         self.logger.info("[PortfolioRebalancer] Initialized with margin management settings:")
         self.logger.info(f"  High margin threshold: {self.high_margin_threshold:.0%} (will trigger rebalancing)")
-        self.logger.info(f"  Target margin threshold: {self.target_margin_threshold:.0%} (target after rebalancing)")
-        self.logger.info(f"  Margin buffer: {self.margin_buffer_pct:.0%}")
-        self.logger.info(f"  Rebalance cooldown: {self.rebalance_cooldown_days} days")
-        self.logger.info(f"  Position reduction limits: normal={self.max_position_reduction_pct:.0%}, losing={self.losing_position_max_reduction_pct:.0%}, urgent={self.urgent_reduction_pct:.0%}")
+        self.logger.info(f"  Target margin threshold: {self.target_margin_threshold:.0%} (rebalance target)")
+        self.logger.info(f"  Margin calculation method: {self.margin_calculation_method}")
+        self.logger.info(f"  Use portfolio calculator: {self.use_portfolio_calculator}")
     
     def analyze_margin_status(self, current_date: Optional[datetime] = None) -> Dict[str, Any]:
         """
@@ -159,149 +161,140 @@ class PortfolioRebalancer:
             'days_since_rebalance': days_since_rebalance
         }
     
-    def can_add_position_with_hedge(self, position_data: Dict[str, Any], hedge_delta: float) -> Tuple[bool, Dict[str, Any]]:
+    def can_add_position_with_hedge(self, position_data: Dict[str, Any], hedge_delta: float) -> Tuple[bool, Dict]:
         """
-        Check if a new position can be added considering its margin impact along with any necessary hedging.
+        Determine if a new position can be added to the portfolio, including its hedge impact.
         
         Args:
-            position_data: Position data including symbol, contracts, price, etc.
-            hedge_delta: Delta to hedge (opposite of position delta)
+            position_data: Position data dictionary
+            hedge_delta: Expected delta of the hedge position
             
         Returns:
-            Tuple of (can_add, details)
+            tuple: (can_add: bool, details: dict) - Whether position can be added and details
         """
-        # Get current portfolio metrics
-        portfolio_value = self.portfolio.get_portfolio_value()
-        current_margin = self.portfolio.calculate_margin_requirement()
-        
-        # Extract basic position information
-        symbol = position_data.get('symbol', '')
+        # Extract key fields from position data
+        symbol = position_data.get('symbol', 'Unknown')
         contracts = position_data.get('contracts', 0)
         price = position_data.get('price', 0)
         
-        # Initialize margin variables
-        position_margin = 0
-        hedge_margin = 0
+        self.logger.info(f"[PortfolioRebalancer] Analyzing margin impact for {contracts} contracts of {symbol} at ${price:.2f}")
+        self.logger.info(f"[PortfolioRebalancer] Expected hedge delta: {hedge_delta:.4f}")
+        
+        # Determine calculation approach - use integrated hedging if available
+        using_integrated_hedging = False
+        
+        # Check if we have a hedging manager with margin calculation capabilities
+        if self.hedging_manager and hasattr(self.hedging_manager, 'calculate_theoretical_margin'):
+            using_integrated_hedging = True
+        
         total_additional_margin = 0
         
-        # Debug the configuration
-        self.logger.info(f"[PortfolioRebalancer] Margin calculation configuration:")
-        self.logger.info(f"  Calculation method: {self.margin_calculation_method}")
-        self.logger.info(f"  Use portfolio calculator: {self.use_portfolio_calculator}")
-        self.logger.info(f"  Portfolio has margin calculator: {hasattr(self.portfolio, 'margin_calculator')}")
-        
-        if hasattr(self.portfolio, 'margin_calculator'):
-            # Get user-friendly calculator type name for portfolio's calculator
-            calc_class_name = type(self.portfolio.margin_calculator).__name__
-            calc_display_name = calc_class_name
+        if using_integrated_hedging:
+            self.logger.info(f"[PortfolioRebalancer] Using integrated hedging approach for margin calculation")
             
-            if calc_class_name == "SPANMarginCalculator":
-                calc_display_name = "SPAN"
-            elif calc_class_name == "OptionMarginCalculator":
-                calc_display_name = "Option"
-            elif calc_class_name == "MarginCalculator":
-                calc_display_name = "Basic"
+            # Convert position_data to format expected by hedging manager
+            instrument_data = position_data.get('instrument_data', {})
+            option_data = {
+                'symbol': symbol,
+                'OptionSymbol': symbol,
+                'price': price,
+                'MidPrice': price,
+                'Delta': instrument_data.get('Delta', 0),
+                'Gamma': instrument_data.get('Gamma', 0),
+                'Theta': instrument_data.get('Theta', 0),
+                'Vega': instrument_data.get('Vega', 0),
+                'Strike': instrument_data.get('Strike', 0),
+                'Expiration': instrument_data.get('Expiration', None),
+                'UnderlyingSymbol': instrument_data.get('UnderlyingSymbol', 'SPY'),
+                'UnderlyingPrice': position_data.get('underlying_price', 0),
+                'Type': 'put' if 'P' in symbol else 'call'
+            }
+            
+            # Calculate margin with hedging
+            margin_result = self.hedging_manager.calculate_theoretical_margin(option_data, contracts)
+            
+            if margin_result and 'total_margin' in margin_result:
+                total_additional_margin = margin_result['total_margin']
+                hedging_benefits = margin_result.get('hedging_benefits', 0)
                 
-            self.logger.info(f"  Portfolio margin calculator type: {calc_display_name}")
-            
-        self.logger.info(f"  Rebalancer has margin calculator: {self.margin_calculator is not None}")
-        
-        if self.margin_calculator:
-            # Get user-friendly calculator type name for rebalancer's calculator
-            calc_class_name = type(self.margin_calculator).__name__
-            calc_display_name = calc_class_name
-            
-            if calc_class_name == "SPANMarginCalculator":
-                calc_display_name = "SPAN"
-            elif calc_class_name == "OptionMarginCalculator":
-                calc_display_name = "Option"
-            elif calc_class_name == "MarginCalculator":
-                calc_display_name = "Basic"
-                
-            self.logger.info(f"  Rebalancer margin calculator type: {calc_display_name}")
-        
-        # SIMPLE APPROACH: Use position_data's margin_per_contract for margin calculation
-        # This will be more reliable than using portfolio's margin calculator which may have issues
-        if 'margin_per_contract' in position_data:
-            margin_per_contract = position_data.get('margin_per_contract', 0)
-            self.logger.info(f"[PortfolioRebalancer] Using margin_per_contract from position data: ${margin_per_contract:.2f}")
-            
-            # Calculate position margin
-            position_margin = margin_per_contract * contracts
-            
-            # Estimate hedge margin based on delta
-            hedge_shares = abs(hedge_delta) * 100
-            underlying_price = position_data.get('underlying_price', 0)
-            if underlying_price <= 0 and 'instrument_data' in position_data:
-                underlying_price = position_data['instrument_data'].get('UnderlyingPrice', 0)
-            
-            hedge_margin_rate = 0.25  # 25% margin requirement for index ETFs
-            hedge_margin = hedge_shares * underlying_price * hedge_margin_rate
-            
-            # Total additional margin required
-            total_additional_margin = position_margin + hedge_margin
-        # FALLBACK: Use a simple estimation based on price and contracts
-        else:
-            self.logger.info(f"[PortfolioRebalancer] Using simplified margin calculation")
-            
-            # For option positions, estimate margin as a percentage of notional value
-            notional_value = price * contracts * 100  # 100 shares per contract
-            
-            # Use different margin rates based on position type
-            is_short = position_data.get('is_short', False)
-            if is_short:
-                # Higher margin for short options (20-40% of notional)
-                margin_rate = 0.40
+                self.logger.info(f"[PortfolioRebalancer] Integrated margin calculation:")
+                self.logger.info(f"  Position margin: ${total_additional_margin:.2f}")
+                self.logger.info(f"  Hedging benefits: ${hedging_benefits:.2f}")
             else:
-                # Full value for long options (100% of notional)
-                margin_rate = 1.0
-            
-            position_margin = notional_value * margin_rate
-            
-            # Estimate hedge margin based on delta
-            hedge_shares = abs(hedge_delta) * 100
-            underlying_price = position_data.get('underlying_price', 0)
-            if underlying_price <= 0 and 'instrument_data' in position_data:
-                underlying_price = position_data['instrument_data'].get('UnderlyingPrice', 0)
-            
-            hedge_margin_rate = 0.25  # 25% margin requirement for index ETFs
-            hedge_margin = hedge_shares * underlying_price * hedge_margin_rate
-            
-            # Total additional margin required
-            total_additional_margin = position_margin + hedge_margin
+                self.logger.warning(f"[PortfolioRebalancer] Integrated margin calculation failed, using fallback method")
+                # Fall back to original approach below
+                using_integrated_hedging = False
         
-        # Calculate new margin utilization if position is added
-        new_margin = current_margin + total_additional_margin
-        new_utilization = new_margin / portfolio_value if portfolio_value > 0 else 1.0
+        # Fall back to traditional approach if integrated hedging failed or not available
+        if not using_integrated_hedging:
+            # Check if we have margin_per_contract provided
+            if 'margin_per_contract' in position_data:
+                margin_per_contract = position_data.get('margin_per_contract', 0)
+                self.logger.info(f"[PortfolioRebalancer] Using margin_per_contract from position data: ${margin_per_contract:.2f}")
+                
+                # Calculate position margin
+                position_margin = margin_per_contract * contracts
+                
+                # Estimate hedge margin based on delta
+                hedge_shares = abs(hedge_delta) * 100
+                underlying_price = position_data.get('underlying_price', 0)
+                if underlying_price <= 0 and 'instrument_data' in position_data:
+                    underlying_price = position_data['instrument_data'].get('UnderlyingPrice', 0)
+                
+                hedge_margin_rate = 0.25  # 25% margin requirement for index ETFs
+                hedge_margin = hedge_shares * underlying_price * hedge_margin_rate
+                
+                # Total additional margin required
+                total_additional_margin = position_margin + hedge_margin
+                
+                self.logger.info(f"  Position margin: ${position_margin:.2f}")
+                self.logger.info(f"  Expected hedge delta: {hedge_delta:.2f}")
+                self.logger.info(f"  Estimated hedge margin: ${hedge_margin:.2f}")
+                self.logger.info(f"  Total additional margin: ${total_additional_margin:.2f}")
+            else:
+                # Missing margin_per_contract, use a conservative estimate
+                self.logger.warning(f"[PortfolioRebalancer] No margin_per_contract provided, making conservative estimate")
+                underlying_price = position_data.get('underlying_price', 0)
+                if underlying_price <= 0 and 'instrument_data' in position_data:
+                    underlying_price = position_data['instrument_data'].get('UnderlyingPrice', 0)
+                
+                # Use 40% of notional as conservative estimate for short options
+                notional_value = underlying_price * contracts * 100
+                total_additional_margin = notional_value * 0.4
+                self.logger.info(f"  Conservative margin estimate: ${total_additional_margin:.2f}")
         
-        # Determine if position can be added
-        can_add = new_utilization < self.high_margin_threshold
+        # Calculate current portfolio values
+        portfolio_value = self.portfolio.get_portfolio_value()
+        current_margin = self.portfolio.calculate_margin_requirement()
+        current_margin_utilization = current_margin / portfolio_value if portfolio_value > 0 else 1.0
         
-        # Store the result with detailed information
+        # Calculate new margin values
+        new_total_margin = current_margin + total_additional_margin
+        new_margin_utilization = new_total_margin / portfolio_value if portfolio_value > 0 else 1.0
+        
+        # Determine if the position can be added
+        can_add = new_margin_utilization < self.high_margin_threshold
+        
+        # Prepare detailed result
         details = {
             'current_margin': current_margin,
-            'position_margin': position_margin,
-            'hedge_margin': hedge_margin,
-            'total_additional_margin': total_additional_margin,
-            'new_margin': new_margin,
-            'current_utilization': current_margin / portfolio_value if portfolio_value > 0 else 1.0,
-            'new_utilization': new_utilization,
-            'threshold': self.high_margin_threshold,
-            'calculation_method': 'simplified' if 'margin_per_contract' not in position_data else 'position_data'
+            'additional_margin': total_additional_margin,
+            'new_total_margin': new_total_margin,
+            'portfolio_value': portfolio_value,
+            'current_utilization': current_margin_utilization,
+            'new_utilization': new_margin_utilization,
+            'high_threshold': self.high_margin_threshold,
+            'calculation_method': 'integrated_hedging' if using_integrated_hedging else 'estimated',
+            'can_add': can_add
         }
         
-        # Log the analysis
-        self.logger.info(f"[PortfolioRebalancer] Analyzing margin impact of new position:")
-        self.logger.info(f"  Symbol: {symbol}, Contracts: {contracts}")
-        self.logger.info(f"  Position margin: ${position_margin:.2f}")
-        self.logger.info(f"  Expected hedge delta: {hedge_delta:.2f}")
-        self.logger.info(f"  Estimated hedge margin: ${hedge_margin:.2f}")
-        self.logger.info(f"  Total additional margin: ${total_additional_margin:.2f}")
-        self.logger.info(f"  Current margin: ${current_margin:.2f} ({details['current_utilization']:.2%})")
-        self.logger.info(f"  New margin: ${new_margin:.2f} ({new_utilization:.2%})")
+        # Log complete analysis
+        self.logger.info(f"[PortfolioRebalancer] Margin impact analysis:")
+        self.logger.info(f"  Current margin: ${current_margin:.2f} ({current_margin_utilization:.2%})")
+        self.logger.info(f"  Additional margin: ${total_additional_margin:.2f}")
+        self.logger.info(f"  New total margin: ${new_total_margin:.2f} ({new_margin_utilization:.2%})")
         self.logger.info(f"  High threshold: {self.high_margin_threshold:.2%}")
         self.logger.info(f"  Can add position: {can_add}")
-        self.logger.info(f"  Calculation method: {details['calculation_method']}")
         
         return can_add, details
     
