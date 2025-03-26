@@ -42,6 +42,21 @@ python Main.py -s ThetaDecayStrategy
 
 ## Recent Changes
 
+### April 3, 2024
+
+- **Standardized Logging Configuration**:
+  - All runner scripts now use INFO level logging by default
+  - Added `--debug` flag to all runners to optionally enable DEBUG logging
+  - Standardized component-level logging configuration across all runner scripts
+  - Runner scripts now respect logging settings from YAML configuration files
+  - Fixed issues with Unicode character handling in logs
+  
+- **Improved SPAN Margin Calculator Integration**:
+  - Enhanced the margin calculator initialization for proper type detection
+  - Fixed margin calculation references in risk manager
+  - Added support for delegation to SPAN margin calculator
+  - Improved error handling in margin calculations
+
 ### March 25, 2024
 
 - **Improved Log Output**: All strategies now save log files to the output directory specified in the config file.
@@ -53,9 +68,14 @@ python Main.py -s ThetaDecayStrategy
 
 ### Usage Example
 
-Run a strategy with data analysis (first run):
+Run a strategy with standard INFO logging:
 ```bash
 python runners/run_put_sell_strat.py -c config/strategy/put_sell_config.yaml
+```
+
+Run a strategy with DEBUG logging for more detailed output:
+```bash
+python runners/run_put_sell_strat.py -c config/strategy/put_sell_config.yaml --debug
 ```
 
 Run a strategy with data analysis skipped (faster on subsequent runs):

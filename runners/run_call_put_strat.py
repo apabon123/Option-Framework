@@ -23,11 +23,11 @@ from utils.simple_logging import SimpleLoggingManager
 
 
 def main():
-    """Run the Call-Put Strategy with detailed logging."""
-    print("\n=== Starting Call-Put Strategy with Enhanced Logging ===")
+    """Run the Call/Put Strategy with enhanced logging."""
+    print("\n=== Starting Call/Put Strategy with Enhanced Logging ===")
     
     # Parse command line arguments
-    parser = argparse.ArgumentParser(description="Run Call-Put Strategy with detailed logging")
+    parser = argparse.ArgumentParser(description="Run Call/Put Strategy with detailed logging")
     parser.add_argument(
         "-c", "--config",
         default=os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "config/strategy/call_put_config.yaml"),
@@ -54,6 +54,11 @@ def main():
         "--skip-analysis",
         action="store_true",
         help="Skip input file analysis to speed up repeated runs"
+    )
+    parser.add_argument(
+        "--debug",
+        action="store_true",
+        help="Enable debug mode logging"
     )
     args = parser.parse_args()
 
@@ -154,33 +159,41 @@ def main():
     config['strategy']['name'] = "CallPutStrat"
     print(f"Strategy set to: CallPutStrat")
 
-    # Enable verbose logging
+    # Setup logging configuration if not specified
     if 'logging' not in config:
         config['logging'] = {}
-    config['logging']['level'] = 'DEBUG'
-    config['logging']['file'] = True
     
-    # Enhanced component logging
-    if 'components' not in config['logging']:
-        config['logging']['components'] = {}
+    # Only set logging level if not specified in the config
+    if 'level' not in config['logging']:
+        config['logging']['level'] = 'INFO'
     
-    # Set margin logging to verbose
-    if 'margin' not in config['logging']['components']:
-        config['logging']['components']['margin'] = {}
-    config['logging']['components']['margin']['level'] = 'verbose'
+    # Ensure file logging is enabled
+    config['logging']['log_to_file'] = True
+
+    # Make sure component_levels exists
+    if 'component_levels' not in config['logging']:
+        config['logging']['component_levels'] = {}
+
+    # Only set component levels if not already specified
+    if 'margin' not in config['logging']['component_levels']:
+        config['logging']['component_levels']['margin'] = 'INFO'
     
-    # Set portfolio logging to verbose
-    if 'portfolio' not in config['logging']['components']:
-        config['logging']['components']['portfolio'] = {}
-    config['logging']['components']['portfolio']['level'] = 'verbose'
+    if 'portfolio' not in config['logging']['component_levels']:
+        config['logging']['component_levels']['portfolio'] = 'INFO'
+        
+    if 'trading' not in config['logging']['component_levels']:
+        config['logging']['component_levels']['trading'] = 'INFO'
 
     # Configure logging
-    print("Setting up enhanced logging...")
+    print("Setting up logging...")
+    print(f"Logging level from config: {config['logging']['level']}")
+    print(f"Component levels: {config['logging']['component_levels']}")
+    
     logging_manager = SimpleLoggingManager()
     logger = logging_manager.setup_logging(
         config_dict=config,
         verbose_console=True,  # Enable verbose console output
-        debug_mode=True,       # Enable debug mode
+        debug_mode=args.debug, # Only enable debug mode if --debug flag is provided
         clean_format=False     # Include timestamp and level in logs
     )
     

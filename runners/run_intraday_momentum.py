@@ -17,11 +17,12 @@ from datetime import datetime
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from core.trading_engine import TradingEngine
-from simple_logging import SimpleLoggingManager
+from strategies.intraday_momentum import IntradayMomentumStrategy
+from utils.simple_logging import SimpleLoggingManager
 
 
 def main():
-    """Run the Intraday Momentum Strategy with detailed logging."""
+    """Run the Intraday Momentum Strategy with enhanced logging."""
     print("\n=== Starting Intraday Momentum Strategy with Enhanced Logging ===")
     
     # Parse command line arguments
@@ -40,19 +41,9 @@ def main():
         help="Override end date (YYYY-MM-DD)"
     )
     parser.add_argument(
-        "--input-file",
-        help="Override the input data file path"
-    )
-    parser.add_argument(
         "--debug",
         action="store_true",
-        help="Enable debug mode with additional logging"
-    )
-    parser.add_argument(
-        "--margin-log-level",
-        choices=["minimal", "standard", "verbose", "debug"],
-        default="standard",
-        help="Set the verbosity level for margin calculations"
+        help="Enable debug mode logging"
     )
     args = parser.parse_args()
 
@@ -65,30 +56,6 @@ def main():
     with open(config_path, 'r') as f:
         config = yaml.safe_load(f)
         print(f"Loaded configuration successfully")
-
-    # Override with input file if provided
-    if args.input_file:
-        if os.path.exists(args.input_file):
-            print(f"Using input file: {args.input_file}")
-            if 'intraday' not in config:
-                config['intraday'] = {}
-            config['intraday']['file_path'] = args.input_file
-        else:
-            print(f"WARNING: Specified input file not found: {args.input_file}")
-
-    # Check if configured input file exists
-    if 'intraday' in config and 'file_path' in config['intraday']:
-        input_file = config['intraday']['file_path']
-        print(f"Intraday data file from config: {input_file}")
-        
-        if not os.path.exists(input_file):
-            print(f"WARNING: Intraday data file does not exist: {input_file}")
-            print("Please provide a valid intraday data file")
-            return 1
-    else:
-        print("WARNING: No intraday file_path specified in config['intraday']")
-        print("Intraday momentum strategy requires intraday data")
-        return 1
 
     # Override configuration with command-line arguments
     if args.start_date:
@@ -104,34 +71,45 @@ def main():
         print(f"End date override: {args.end_date}")
 
     # Configure strategy
-    if 'strategy' not in config:
-        config['strategy'] = {}
     config['strategy']['name'] = "IntradayMomentumStrategy"
     print(f"Strategy set to: IntradayMomentumStrategy")
 
-    # Enable verbose logging
+    # Setup logging configuration if not specified
     if 'logging' not in config:
         config['logging'] = {}
-    config['logging']['level'] = 'DEBUG' if args.debug else 'INFO'
-    config['logging']['file'] = True
     
-    # Enhanced component logging
-    if 'components' not in config['logging']:
-        config['logging']['components'] = {}
+    # Only set logging level if not specified in the config
+    if 'level' not in config['logging']:
+        config['logging']['level'] = 'INFO'
     
-    # Set margin logging level
-    if 'margin' not in config['logging']['components']:
-        config['logging']['components']['margin'] = {}
-    config['logging']['components']['margin']['level'] = args.margin_log_level
+    # Ensure file logging is enabled
+    config['logging']['log_to_file'] = True
+
+    # Make sure component_levels exists
+    if 'component_levels' not in config['logging']:
+        config['logging']['component_levels'] = {}
+
+    # Only set component levels if not already specified
+    if 'margin' not in config['logging']['component_levels']:
+        config['logging']['component_levels']['margin'] = 'INFO'
     
+    if 'portfolio' not in config['logging']['component_levels']:
+        config['logging']['component_levels']['portfolio'] = 'INFO'
+        
+    if 'trading' not in config['logging']['component_levels']:
+        config['logging']['component_levels']['trading'] = 'INFO'
+
     # Configure logging
-    print("Setting up enhanced logging...")
+    print("Setting up logging...")
+    print(f"Logging level from config: {config['logging']['level']}")
+    print(f"Component levels: {config['logging']['component_levels']}")
+    
     logging_manager = SimpleLoggingManager()
     logger = logging_manager.setup_logging(
         config_dict=config,
-        verbose_console=True,
-        debug_mode=args.debug,
-        clean_format=False
+        verbose_console=True,  # Enable verbose console output
+        debug_mode=args.debug, # Only enable debug mode if --debug flag is provided
+        clean_format=False     # Include timestamp and level in logs
     )
     
     log_file_path = logging_manager.get_log_file_path()
@@ -143,13 +121,17 @@ def main():
     end_date = config.get('dates', {}).get('end_date', 'Not specified')
     print(f"Backtest date range: {start_date} to {end_date}")
     
-    # Initialize the trading engine with the configuration
+    # Initialize the trading engine and run the backtest
     print("Initializing trading engine...")
     try:
-        engine = TradingEngine(config, logger)
+        # Create the IntradayMomentumStrategy instance
+        strategy = IntradayMomentumStrategy(config.get('strategy', {}), logger)
+        
+        # Create the TradingEngine with the strategy instance
+        engine = TradingEngine(config, strategy, logger)
         
         # Run the backtest
-        print("Starting backtest...")
+        print("\nStarting backtest...")
         engine.run_backtest()
         
         # Print summary

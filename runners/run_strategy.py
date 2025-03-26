@@ -12,7 +12,7 @@ import sys
 import argparse
 import yaml
 import logging
-import pandas as pd
+import importlib
 from datetime import datetime
 from pathlib import Path
 
@@ -20,38 +20,40 @@ from pathlib import Path
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from core.trading_engine import TradingEngine
-from simple_logging import SimpleLoggingManager
+from utils.simple_logging import SimpleLoggingManager
 
 
 def main():
-    """Run a trading strategy with enhanced logging and proper data handling."""
-    print("\n=== Universal Strategy Runner with Enhanced Logging ===")
+    """Run any trading strategy with enhanced logging."""
+    print("\n=== Generic Strategy Runner with Enhanced Logging ===")
     
     # Parse command line arguments
-    parser = argparse.ArgumentParser(description="Run trading strategies with enhanced logging")
+    parser = argparse.ArgumentParser(description="Run any trading strategy with detailed logging")
     parser.add_argument(
         "-c", "--config",
-        default=None,
+        required=True,
         help="Path to configuration YAML file"
     )
     parser.add_argument(
-        "-s", "--strategy",
+        "--strategy-module",
         required=True,
-        help="Strategy to run (e.g., PutSellStrat, ThetaDecayStrategy, CallPutStrat)"
+        help="Strategy module (e.g., strategies.put_sell_strat)"
+    )
+    parser.add_argument(
+        "--strategy-class",
+        required=True,
+        help="Strategy class name (e.g., PutSellStrategy)"
     )
     parser.add_argument(
         "--start-date",
-        default=None,
         help="Override start date (YYYY-MM-DD)"
     )
     parser.add_argument(
         "--end-date",
-        default=None,
         help="Override end date (YYYY-MM-DD)"
     )
     parser.add_argument(
         "--input-file",
-        default=None,
         help="Override the input data file path"
     )
     parser.add_argument(
@@ -60,36 +62,17 @@ def main():
         help="Use test data from ../tests/data/test_data.csv"
     )
     parser.add_argument(
-        "--log-level",
-        choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
-        default="DEBUG",
-        help="Set the logging level"
+        "--skip-analysis",
+        action="store_true",
+        help="Skip input file analysis to speed up repeated runs"
     )
     parser.add_argument(
         "--debug",
         action="store_true",
-        help="Enable extra debug information"
+        help="Enable debug mode logging"
     )
     args = parser.parse_args()
 
-    # Determine the config file based on the strategy if not specified
-    if args.config is None:
-        # Map strategy names to config files
-        config_mapping = {
-            "PutSellStrat": "../config/strategy/put_sell_config.yaml",
-            "CallPutStrat": "../config/strategy/call_put_config.yaml", 
-            "ThetaDecayStrategy": "../config/strategy/theta_decay_config.yaml",
-            # Add more strategies as needed
-        }
-        
-        if args.strategy in config_mapping:
-            args.config = config_mapping[args.strategy]
-            print(f"Using default config for {args.strategy}: {args.config}")
-        else:
-            # Default to main config if strategy-specific config doesn't exist
-            args.config = "../config/config.yaml"
-            print(f"No specific config found for {args.strategy}, using default: {args.config}")
-    
     # Load configuration
     config_path = args.config
     print(f"Loading configuration from: {config_path}")
@@ -100,11 +83,9 @@ def main():
         config = yaml.safe_load(f)
         print(f"Loaded configuration successfully")
 
-    # HANDLE INPUT FILE
-    test_data_path = "../tests/data/test_data.csv"
-    
-    # Always use test data if specified
+    # Check for test data flag
     if args.use_test_data:
+        test_data_path = "../tests/data/test_data.csv"
         if os.path.exists(test_data_path):
             print(f"Using test data from: {test_data_path}")
             if 'paths' not in config:
@@ -112,92 +93,25 @@ def main():
             config['paths']['input_file'] = test_data_path
         else:
             print(f"WARNING: Test data file not found: {test_data_path}")
-    
-    # Override with explicit input file if provided
+
+    # Override with input file if provided
     if args.input_file:
-        if os.path.exists(args.input_file):
-            print(f"Using input file: {args.input_file}")
-            if 'paths' not in config:
-                config['paths'] = {}
-            config['paths']['input_file'] = args.input_file
-        else:
-            print(f"WARNING: Specified input file not found: {args.input_file}")
-    
-    # Check if configured input file exists
+        if 'paths' not in config:
+            config['paths'] = {}
+        config['paths']['input_file'] = args.input_file
+        print(f"Input file override: {args.input_file}")
+
+    # Print important configuration values for debugging
     if 'paths' in config and 'input_file' in config['paths']:
-        input_file = config['paths']['input_file']
-        print(f"Input file from config: {input_file}")
+        print(f"Input file from config: {config['paths']['input_file']}")
         
+        # Check if input file exists
+        input_file = config['paths']['input_file']
         if not os.path.exists(input_file):
             print(f"WARNING: Input file does not exist: {input_file}")
-            
-            # Fall back to test data if available
-            if os.path.exists(test_data_path):
-                print(f"Falling back to test data: {test_data_path}")
-                config['paths']['input_file'] = test_data_path
-            else:
-                print("ERROR: No valid input data file available")
-                return 1
-    else:
-        print("WARNING: No input_file specified in config['paths']")
-        
-        # Fall back to test data if available
-        if os.path.exists(test_data_path):
-            print(f"Using test data as default: {test_data_path}")
-            if 'paths' not in config:
-                config['paths'] = {}
-            config['paths']['input_file'] = test_data_path
-        else:
-            print("ERROR: No valid input data file available")
-            return 1
-    
-    # Analyze the data file for date range
-    input_file = config['paths']['input_file']
-    try:
-        if args.debug:
-            print(f"\nAnalyzing data file: {input_file}")
-        
-        df = pd.read_csv(input_file)
-        if args.debug:
-            print(f"Data shape: {df.shape}")
-            print(f"Columns: {', '.join(df.columns)}")
-        
-        # Check and process date column
-        if 'date' in df.columns:
-            # Convert to datetime if needed
-            if df['date'].dtype != 'datetime64[ns]':
-                df['date'] = pd.to_datetime(df['date'])
-            
-            # Get unique dates
-            unique_dates = df['date'].dt.date.unique()
-            
-            if args.debug:
-                print(f"Data contains dates: {min(unique_dates)} to {max(unique_dates)}")
-            
-            # Override dates if not explicitly specified
-            if not args.start_date:
-                if 'dates' not in config or 'start_date' not in config['dates']:
-                    start_date = min(unique_dates)
-                    if 'dates' not in config:
-                        config['dates'] = {}
-                    config['dates']['start_date'] = str(start_date)
-                    print(f"Setting start date to match data: {start_date}")
-            
-            if not args.end_date:
-                if 'dates' not in config or 'end_date' not in config['dates']:
-                    end_date = max(unique_dates)
-                    if 'dates' not in config:
-                        config['dates'] = {}
-                    config['dates']['end_date'] = str(end_date)
-                    print(f"Setting end date to match data: {end_date}")
-    except Exception as e:
-        print(f"Warning: Error analyzing data file: {e}")
-        if args.debug:
-            import traceback
-            traceback.print_exc()
-    
-    # HANDLE DATE RANGE
-    # Override date range with command-line arguments
+            print("This will cause 'No trading dates available' error")
+
+    # Override configuration with command-line arguments
     if args.start_date:
         if 'dates' not in config:
             config['dates'] = {}
@@ -209,38 +123,63 @@ def main():
             config['dates'] = {}
         config['dates']['end_date'] = args.end_date
         print(f"End date override: {args.end_date}")
-    
-    # HANDLE STRATEGY - Override strategy in config
+
+    # Import the strategy module and class
+    try:
+        module_name = args.strategy_module
+        class_name = args.strategy_class
+        
+        print(f"Importing strategy module: {module_name}")
+        strategy_module = importlib.import_module(module_name)
+        
+        print(f"Creating strategy class: {class_name}")
+        strategy_class = getattr(strategy_module, class_name)
+    except Exception as e:
+        print(f"Error importing strategy: {str(e)}")
+        return 1
+
+    # Configure strategy
     if 'strategy' not in config:
         config['strategy'] = {}
-    config['strategy']['name'] = args.strategy
-    print(f"Setting strategy: {args.strategy}")
-    
-    # CONFIGURE LOGGING
-    # Enable verbose logging
+    config['strategy']['name'] = class_name
+    print(f"Strategy set to: {class_name}")
+
+    # Setup logging configuration if not specified
     if 'logging' not in config:
         config['logging'] = {}
-    config['logging']['level'] = args.log_level
-    config['logging']['file'] = True
     
-    # Enhanced component logging
-    if 'components' not in config['logging']:
-        config['logging']['components'] = {}
+    # Only set logging level if not specified in the config
+    if 'level' not in config['logging']:
+        config['logging']['level'] = 'INFO'
     
-    # Set margin and portfolio logging to verbose
-    for component in ['margin', 'portfolio']:
-        if component not in config['logging']['components']:
-            config['logging']['components'][component] = {}
-        config['logging']['components'][component]['level'] = 'verbose'
+    # Ensure file logging is enabled
+    config['logging']['log_to_file'] = True
 
-    # Set up logging
-    print("Setting up enhanced logging...")
+    # Make sure component_levels exists
+    if 'component_levels' not in config['logging']:
+        config['logging']['component_levels'] = {}
+
+    # Only set component levels if not already specified
+    if 'margin' not in config['logging']['component_levels']:
+        config['logging']['component_levels']['margin'] = 'INFO'
+    
+    if 'portfolio' not in config['logging']['component_levels']:
+        config['logging']['component_levels']['portfolio'] = 'INFO'
+        
+    if 'trading' not in config['logging']['component_levels']:
+        config['logging']['component_levels']['trading'] = 'INFO'
+
+    # Configure logging
+    print("Setting up logging...")
+    print(f"Logging level from config: {config['logging']['level']}")
+    print(f"Component levels: {config['logging']['component_levels']}")
+    
     logging_manager = SimpleLoggingManager()
     logger = logging_manager.setup_logging(
         config_dict=config,
-        verbose_console=True,
-        debug_mode=True,
-        clean_format=False
+        verbose_console=True,  # Enable verbose console output
+        debug_mode=args.debug, # Only enable debug mode if --debug flag is provided
+        clean_format=False     # Include timestamp and level in logs
     )
     
     log_file_path = logging_manager.get_log_file_path()
@@ -252,14 +191,68 @@ def main():
     end_date = config.get('dates', {}).get('end_date', 'Not specified')
     print(f"Backtest date range: {start_date} to {end_date}")
     
-    # RUN BACKTEST
-    # Initialize the trading engine with the configuration
+    # Initialize the trading engine and run the backtest
     print("Initializing trading engine...")
     try:
-        engine = TradingEngine(config, logger)
+        # Add debug code to analyze the data file
+        if 'paths' in config and 'input_file' in config['paths'] and not args.skip_analysis:
+            input_file = config['paths']['input_file']
+            if os.path.exists(input_file):
+                print(f"\n=== Analyzing Input File: {input_file} ===")
+                try:
+                    import pandas as pd
+                    df = pd.read_csv(input_file)
+                    print(f"Successfully read data file. Shape: {df.shape}")
+                    
+                    # Check date column (try both 'date' and 'DataDate')
+                    date_col = 'date'
+                    if date_col not in df.columns and 'DataDate' in df.columns:
+                        print(f"Date column 'date' not found, but 'DataDate' is available. Using 'DataDate' instead.")
+                        date_col = 'DataDate'
+                    
+                    if date_col in df.columns:
+                        print(f"Date column found: {date_col}")
+                        
+                        # Convert to datetime if needed
+                        if df[date_col].dtype != 'datetime64[ns]':
+                            df[date_col] = pd.to_datetime(df[date_col])
+                        
+                        # Get unique dates
+                        unique_dates = df[date_col].dt.date.unique()
+                        if len(unique_dates) > 0:
+                            print(f"Data contains {len(unique_dates)} unique dates")
+                            print(f"Date range: {min(unique_dates)} to {max(unique_dates)}")
+                            
+                            # Check against backtest dates
+                            start_date = pd.to_datetime(config.get('dates', {}).get('start_date')).date()
+                            end_date = pd.to_datetime(config.get('dates', {}).get('end_date')).date()
+                            print(f"Backtest period: {start_date} to {end_date}")
+                            
+                            dates_in_range = sorted([d for d in unique_dates if start_date <= d <= end_date])
+                            if dates_in_range:
+                                print(f"Found {len(dates_in_range)} trading dates in backtest period:")
+                                print(dates_in_range)
+                            else:
+                                print("WARNING: No trading dates found in the specified backtest period!")
+                                print("This will cause the 'No trading dates available' error.")
+                        else:
+                            print(f"WARNING: No unique dates found in data.")
+                    else:
+                        print(f"WARNING: Date column '{date_col}' not found in data.")
+                        print(f"Available columns: {list(df.columns)}")
+                except Exception as e:
+                    print(f"Error analyzing data file: {e}")
+            else:
+                print(f"WARNING: Input file does not exist: {input_file}")
+        
+        # Create the strategy instance
+        strategy = strategy_class(config.get('strategy', {}), logger)
+        
+        # Create the TradingEngine with the strategy instance
+        engine = TradingEngine(config, strategy, logger)
         
         # Run the backtest
-        print("Starting backtest...")
+        print("\nStarting backtest...")
         engine.run_backtest()
         
         # Print summary
@@ -271,9 +264,8 @@ def main():
         import traceback
         logger.error(traceback.format_exc())
         print(f"Error during backtest: {str(e)}")
-        if args.debug:
-            print("\nStack trace:")
-            traceback.print_exc()
+        print("\nStack trace:")
+        traceback.print_exc()
         return 1
         
     return 0

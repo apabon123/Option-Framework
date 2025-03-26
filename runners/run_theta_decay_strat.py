@@ -11,18 +11,19 @@ import sys
 import argparse
 import yaml
 import logging
+import pandas as pd
 from datetime import datetime
 
 # Add parent directory to path so imports work correctly from the runners folder
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from core.trading_engine import TradingEngine
-from strategies.theta_strategy import ThetaDecayStrategy
+from strategies.theta_decay_strat import ThetaDecayStrategy
 from utils.simple_logging import SimpleLoggingManager
 
 
 def main():
-    """Run the Theta Decay Strategy with detailed logging."""
+    """Run the Theta Decay Strategy with enhanced logging."""
     print("\n=== Starting Theta Decay Strategy with Enhanced Logging ===")
     
     # Parse command line arguments
@@ -53,6 +54,11 @@ def main():
         "--skip-analysis",
         action="store_true",
         help="Skip input file analysis to speed up repeated runs"
+    )
+    parser.add_argument(
+        "--debug",
+        action="store_true",
+        help="Enable debug mode logging"
     )
     args = parser.parse_args()
 
@@ -153,33 +159,41 @@ def main():
     config['strategy']['name'] = "ThetaDecayStrategy"
     print(f"Strategy set to: ThetaDecayStrategy")
 
-    # Enable verbose logging
+    # Setup logging configuration if not specified
     if 'logging' not in config:
         config['logging'] = {}
-    config['logging']['level'] = 'DEBUG'
-    config['logging']['file'] = True
     
-    # Enhanced component logging
-    if 'components' not in config['logging']:
-        config['logging']['components'] = {}
+    # Only set logging level if not specified in the config
+    if 'level' not in config['logging']:
+        config['logging']['level'] = 'INFO'
     
-    # Set margin logging to verbose
-    if 'margin' not in config['logging']['components']:
-        config['logging']['components']['margin'] = {}
-    config['logging']['components']['margin']['level'] = 'verbose'
+    # Ensure file logging is enabled
+    config['logging']['log_to_file'] = True
+
+    # Make sure component_levels exists
+    if 'component_levels' not in config['logging']:
+        config['logging']['component_levels'] = {}
+
+    # Only set component levels if not already specified
+    if 'margin' not in config['logging']['component_levels']:
+        config['logging']['component_levels']['margin'] = 'INFO'
     
-    # Set portfolio logging to verbose
-    if 'portfolio' not in config['logging']['components']:
-        config['logging']['components']['portfolio'] = {}
-    config['logging']['components']['portfolio']['level'] = 'verbose'
+    if 'portfolio' not in config['logging']['component_levels']:
+        config['logging']['component_levels']['portfolio'] = 'INFO'
+        
+    if 'trading' not in config['logging']['component_levels']:
+        config['logging']['component_levels']['trading'] = 'INFO'
 
     # Configure logging
-    print("Setting up enhanced logging...")
+    print("Setting up logging...")
+    print(f"Logging level from config: {config['logging']['level']}")
+    print(f"Component levels: {config['logging']['component_levels']}")
+    
     logging_manager = SimpleLoggingManager()
     logger = logging_manager.setup_logging(
         config_dict=config,
         verbose_console=True,  # Enable verbose console output
-        debug_mode=True,       # Enable debug mode
+        debug_mode=args.debug, # Only enable debug mode if --debug flag is provided
         clean_format=False     # Include timestamp and level in logs
     )
     
@@ -266,6 +280,8 @@ def main():
         print("\nStack trace:")
         traceback.print_exc()
         return 1
+        
+    return 0
 
 
 if __name__ == "__main__":

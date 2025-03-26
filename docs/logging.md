@@ -16,12 +16,12 @@ These control the overall logging verbosity:
 
 ### Component-specific Log Levels
 
-Components like margin calculations and portfolio operations have their own verbosity settings:
+Components like margin calculations, portfolio operations, and trading have their own verbosity settings in the configuration file:
 
-- `minimal`: Only display essential information (summary results)
-- `standard`: Normal operational details (default)
-- `verbose`: Detailed calculation steps and decision points
-- `debug`: Full internal details for troubleshooting
+- `INFO`: Normal operational details (default)
+- `DEBUG`: Detailed calculation steps and decision points
+- `WARNING`: Only show warnings and errors
+- `ERROR`: Only show errors
 
 ## Configuration Options
 
@@ -33,60 +33,63 @@ You can configure logging preferences in the YAML configuration file:
 # Global logging settings
 logging:
   level: "INFO"  # DEBUG, INFO, WARNING, ERROR, CRITICAL
-
-# Margin component logging
-margin:
-  logging:
-    level: "standard"  # minimal, standard, verbose, debug
-
-# Portfolio component logging
-portfolio:
-  logging:
-    level: "standard"  # minimal, standard, verbose, debug
+  log_to_file: true  # Enable logging to file
+  
+  # Component-specific logging levels
+  component_levels:
+    margin: "INFO"  # INFO, DEBUG, WARNING, ERROR
+    portfolio: "INFO"  # INFO, DEBUG, WARNING, ERROR
+    trading: "INFO"  # INFO, DEBUG, WARNING, ERROR
 ```
 
 ### Command-line Options
 
-You can override logging settings from the command line:
+All runner scripts support consistent command-line options:
 
 ```bash
-# Override global logging level
-python Main.py --log-level INFO
+# Use the configuration file but enable debug mode
+python runners/run_put_sell_strat.py --debug
 
-# Override margin calculation verbosity
-python Main.py --margin-log-level minimal
+# Specify a different configuration file
+python runners/run_put_sell_strat.py -c config/strategy/custom_config.yaml
 
-# Override portfolio operations verbosity
-python Main.py --portfolio-log-level verbose
+# Skip data analysis for faster repeated runs
+python runners/run_put_sell_strat.py --skip-analysis
 
-# Enable verbose console output
-python Main.py -v
-
-# Enable debug mode (equivalent to --log-level DEBUG)
-python Main.py -d
+# Override start and end dates
+python runners/run_put_sell_strat.py --start-date 2024-01-01 --end-date 2024-01-31
 ```
+
+## Standardized Logging Behavior
+
+All runner scripts (`run_*.py`) now follow a consistent pattern:
+
+1. Use `INFO` level logging by default
+2. Support the `--debug` flag to enable `DEBUG` level logging
+3. Respect logging settings from YAML configuration files
+4. Standardized component-level logging configuration
 
 ## Examples
 
-### Minimal Logging for Daily Use
+### Default INFO Level Logging
 
 ```bash
-# Run with minimal margin logs but standard portfolio logs
-python Main.py --config config/config.yaml --margin-log-level minimal
+# Run with standard INFO level logging
+python runners/run_put_sell_strat.py
 ```
 
-### Detailed Logging for Debugging
+### Detailed DEBUG Logging
 
 ```bash
-# Run in debug mode with verbose margin logs
-python Main.py --config config/config.yaml -d --margin-log-level verbose
+# Run with detailed DEBUG logging
+python runners/run_put_sell_strat.py --debug
 ```
 
-### Quiet Mode
+### Using Custom Configuration
 
 ```bash
-# Run with minimal logs for all components
-python Main.py --log-level WARNING --margin-log-level minimal --portfolio-log-level minimal
+# Use a custom configuration with its own logging settings
+python runners/run_put_sell_strat.py -c config/strategy/custom_config.yaml
 ```
 
 ## Log Sections
@@ -95,9 +98,18 @@ The logs are organized into sections for easier reading:
 
 - `[Margin]`: Margin calculation logs
 - `[Portfolio]`: Portfolio management logs
-- `[TradeManager]`: Trade execution logs
+- `[Trading]`: Trading engine logs
 - `[INIT]`: Initialization logs
 - `[STATUS]`: Status updates
+
+## Log File Output
+
+All runner scripts automatically log to files in addition to the console output. The log files are stored in the directory specified in the configuration:
+
+```yaml
+paths:
+  output_dir: "output/logs"
+```
 
 ## Summary Sections
 
