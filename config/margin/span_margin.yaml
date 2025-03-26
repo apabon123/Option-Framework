@@ -1,0 +1,42 @@
+################################################################################
+#                     SPAN MARGIN CONFIGURATION                           #
+################################################################################
+
+# Margin Calculator Type - Must be "span" to use SPAN methodology
+margin_calculator_type: "span"
+
+# SPAN Parameters
+span_parameters:
+  # Price move percentage for risk scenarios (0.05 = 5% price move)
+  price_move_pct: 0.05
+  
+  # Volatility shift percentage for risk scenarios (0.3 = 30% vol shift)
+  vol_shift_pct: 0.3
+  
+  # Initial margin percentage (0.1 = 10% of notional)
+  initial_margin_percentage: 0.1
+  
+  # Hedge credit rate (0.8 = 80% credit for hedged positions)
+  hedge_credit_rate: 0.8
+  
+  # Minimum scan risk percentage (0.25 = 25% of notional minimum)
+  min_scan_risk_percentage: 0.25
+  
+  # Maximum margin to premium ratio (prevents extreme margin requirements)
+  max_margin_to_premium_ratio: 20.0
+
+# Margin Calculation Settings
+# Method: 'portfolio' for portfolio-level margin, 'simple' for per-position
+margin_calculation_method: "portfolio"
+
+# Maximum leverage allowed
+max_leverage: 12.0
+
+# Hedging Integration
+# Whether to integrate with hedging manager for delta-neutral calculations
+integrate_hedging: true
+
+# Logging Settings
+logging:
+  # Level of detail for margin logs: "standard", "verbose", "debug"
+  level: "verbose" 

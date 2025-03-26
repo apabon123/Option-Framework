@@ -1102,8 +1102,8 @@ class TradingEngine:
             # Log pre-trade summary
             self._log_pre_trade_summary(current_date, daily_data)
 
-            # Execute trading activities
-            self._execute_trading_activities(current_date, daily_data)
+            # Execute trading activities (without redundant summary logs)
+            self._execute_trading_activities(current_date, daily_data, skip_summaries=True)
 
             # Log post-trade summary
             self._log_post_trade_summary(current_date)
@@ -1124,14 +1124,20 @@ class TradingEngine:
                 f"Error processing trading day {current_date}: {e}")
             raise
 
-    def _log_pre_trade_summary(self, current_date, daily_data):
+    def _log_pre_trade_summary(self, current_date, daily_data, add_header=True):
         """
         Log the pre-trade summary of the portfolio status.
         This includes portfolio value, open positions, and P&L.
+        
+        Args:
+            current_date: Current date for the summary
+            daily_data: Market data for the current date
+            add_header: Whether to add the section header (default: True)
         """
-        self.logger.info("==================================================")
-        self.logger.info(
-            f"PRE-TRADE SUMMARY - {current_date.strftime('%Y-%m-%d')}:")
+        if add_header:
+            self.logger.info("==================================================")
+            self.logger.info(
+                f"PRE-TRADE SUMMARY - {current_date.strftime('%Y-%m-%d')}:")
 
         # Calculate and log portfolio value
         portfolio_value = self.portfolio.get_portfolio_value()
@@ -1523,15 +1529,20 @@ class TradingEngine:
             self.logger.info(
                 "--------------------------------------------------")
 
-    def _log_post_trade_summary(self, current_date):
+    def _log_post_trade_summary(self, current_date, add_header=True):
         """
         Log the post-trade summary of the portfolio status.
         This includes portfolio value, open positions, and P&L.
+        
+        Args:
+            current_date: Current date for the summary
+            add_header: Whether to add the section header (default: True)
         """
         # Log section header
-        self.logger.info("==================================================")
-        self.logger.info(
-            f"POST-TRADE SUMMARY - {current_date.strftime('%Y-%m-%d')}:")
+        if add_header:
+            self.logger.info("==================================================")
+            self.logger.info(
+                f"POST-TRADE SUMMARY - {current_date.strftime('%Y-%m-%d')}:")
 
         # Get and update portfolio value
         portfolio_value = self.portfolio.get_portfolio_value()
@@ -2262,42 +2273,49 @@ class TradingEngine:
                 self.logger.warning(
                     f"Cannot close position {symbol} - not found in portfolio")
 
-    def _execute_trading_activities(self, current_date: datetime, daily_data: pd.DataFrame) -> None:
+    def _execute_trading_activities(self, current_date: datetime, daily_data: pd.DataFrame, skip_summaries=False) -> None:
         """
         Execute trading activities with structured flow, including hedging.
 
-        This method follows a structured flow of:
-        1. Pre-trade assessment
-        2. Strategy signal generation
-        3. Signal execution with integrated hedging
-        4. Exit condition checks
-        5. Explicit hedging adjustments
-        6. Post-trade summary
+        This method implements the complete trading lifecycle with the following phases:
+        1. PRETRADE ANALYSIS - Evaluate current market and portfolio state
+        2. PORTFOLIO REBALANCING - Ensure portfolio is within margin limits
+        3. STRATEGY EVALUATION - Generate trading signals based on market conditions
+        4. HEDGING ANALYSIS - Calculate hedging requirements for new trades (optional)
+        5. MARGIN CALCULATION - Calculate margin requirements for trades and hedges
+        6. POSITION SIZING - Determine appropriate position sizes based on risk parameters
+        7. TRADE EXECUTION - Execute primary trades and associated hedges
+        8. POSITION MANAGEMENT - Add positions to portfolio with proper tracking
+        9. POSTTRADE ANALYSIS - Evaluate the updated portfolio state and metrics
 
         Args:
             current_date: Current processing date 
             daily_data: Market data for the current date
+            skip_summaries: Skip redundant summary logging when called from _process_trading_day
         """
         # --------------------------------------------------------
-        # 1. PRE-TRADE ASSESSMENT - Evaluate current portfolio state
+        # PHASE 1: PRETRADE ANALYSIS
+        # Evaluate current portfolio state before making trading decisions
         # --------------------------------------------------------
         start_time = time.time()
-
-        self.logger.info("PRE-TRADE PORTFOLIO ASSESSMENT:")
-        self.logger.info("-" * 50)
 
         # Update positions first to ensure we have current market data
         self._update_positions_market_data(daily_data)
 
-        # Perform pre-trade activities
-        self._log_pre_trade_summary(current_date, daily_data)
+        if not skip_summaries:
+            self.logger.info("PHASE 1: PRETRADE ANALYSIS")
+            self.logger.info("-" * 50)
+
+            # Perform pre-trade activities
+            self._log_pre_trade_summary(current_date, daily_data)
 
         # --------------------------------------------------------
-        # 2. MARGIN MANAGEMENT - Ensure within margin requirements
+        # PHASE 2: PORTFOLIO REBALANCING
+        # Ensure portfolio is within margin limits before adding new positions
         # --------------------------------------------------------
         # Check margin management needs if margin manager exists
         if self.margin_manager:
-            self.logger.info("MARGIN MANAGEMENT STATUS:")
+            self.logger.info("PHASE 2: PORTFOLIO REBALANCING")
             self.logger.info("-" * 50)
 
             # Convert to market data by symbol for margin analysis
@@ -2315,9 +2333,58 @@ class TradingEngine:
                     f"  Current margin utilization: {margin_status['margin_utilization']:.2%}")
                 self.logger.warning(
                     f"  Target margin utilization: {self.margin_manager.target_margin_threshold:.2%}")
+                
+                # Here we would implement systematic position reduction
+                # based on the margin_manager's recommendations
+                if hasattr(self.margin_manager, 'rebalance_positions'):
+                    self.margin_manager.rebalance_positions(current_date, daily_data)
+            else:
+                self.logger.info("Portfolio margin within acceptable limits, no rebalancing needed")
 
-                # Rebalance the portfolio
-            # Analyze current portfolio delta exposure
+        # --------------------------------------------------------
+        # PHASE 3: STRATEGY EVALUATION
+        # Identify potential new trading opportunities based on market conditions
+        # --------------------------------------------------------
+        self.logger.info("PHASE 3: STRATEGY EVALUATION")
+        self.logger.info("-" * 50)
+        
+        # Generate trading signals
+        signals = self.strategy.generate_signals(current_date, daily_data)
+        
+        if signals:
+            self.logger.info(f"Generated {len(signals)} trading signals")
+            for i, signal in enumerate(signals):
+                self.logger.info(f"  Signal {i+1}: {signal}")
+        else:
+            self.logger.info("No trading signals generated for today")
+        
+        # --------------------------------------------------------
+        # PHASE 4-7: SIGNAL PROCESSING AND EXECUTION
+        # For each signal: Calculate hedging requirements, determine margin,
+        # size the position appropriately, and execute trades
+        # --------------------------------------------------------
+        if signals:
+            self.logger.info("PHASES 4-7: SIGNAL PROCESSING AND EXECUTION")
+            self.logger.info("-" * 50)
+            self._execute_signals(signals, daily_data, current_date)
+        
+        # --------------------------------------------------------
+        # PHASE 8: POSITION MANAGEMENT - EXIT CONDITION CHECKS
+        # Check existing positions against exit criteria
+        # --------------------------------------------------------
+        if self.portfolio.positions:
+            self.logger.info("PHASE 8: POSITION MANAGEMENT - EXIT CHECKS")
+            self.logger.info("-" * 50)
+            self._check_exit_conditions(daily_data, current_date)
+
+        # --------------------------------------------------------
+        # PHASE 8B: POSITION MANAGEMENT - PORTFOLIO HEDGING ADJUSTMENTS
+        # Adjust hedge positions based on overall portfolio exposure
+        # --------------------------------------------------------
+        if hasattr(self, 'hedging_manager') and self.hedging_manager:
+            self.logger.info("PHASE 8B: POSITION MANAGEMENT - HEDGING ADJUSTMENTS")
+            self.logger.info("-" * 50)
+            
             self.logger.info("[Hedging] Analyzing portfolio exposure")
             delta_summary = self.hedging_manager.calculate_hedge_requirements(
                 daily_data, current_date)
@@ -2348,19 +2415,21 @@ class TradingEngine:
                     f"[Hedging] Hedge delta: {current_hedge.current_delta:.4f}")
 
         # --------------------------------------------------------
-        # 6. POST-TRADE SUMMARY - Log final portfolio state
+        # PHASE 9: POSTTRADE ANALYSIS
+        # Evaluate the portfolio after trading to ensure all metrics are within limits
         # --------------------------------------------------------
-        self.logger.info("POST-TRADE PORTFOLIO ASSESSMENT:")
-        self.logger.info("-" * 50)
+        if not skip_summaries:
+            self.logger.info("PHASE 9: POSTTRADE ANALYSIS")
+            self.logger.info("-" * 50)
 
-        # Log post-trade portfolio summary
-        self._log_post_trade_summary(current_date)
+            # Log post-trade portfolio summary
+            self._log_post_trade_summary(current_date)
 
         # Calculate and log execution time
         end_time = time.time()
         execution_time = end_time - start_time
         self.logger.info(
-            f"Day execution completed in {execution_time:.2f} seconds")
+            f"Trading day execution completed in {execution_time:.2f} seconds")
 
     def _check_exit_conditions(self, daily_data: pd.DataFrame, current_date: datetime) -> None:
         """
@@ -2494,7 +2563,7 @@ class TradingEngine:
                 if position_type.lower() == 'option' and self.hedging_manager and hasattr(self.hedging_manager, 'create_theoretical_hedge_position'):
                     # Create temporary option position for hedging calculation
                     self.logger.info(
-                        f"[TradeManager] Calculating hedge position for {symbol}")
+                        f"[PHASE 4: HEDGING] Calculating hedge position for {symbol}")
 
                     # Format option_data for hedging manager
                     option_data = {
@@ -2542,12 +2611,14 @@ class TradingEngine:
 
                     if hedge_position:
                         self.logger.info(
-                            f"[TradeManager] Hedge required: {hedge_position.contracts} shares of {hedge_position.symbol}")
+                            f"[PHASE 4: HEDGING] Hedge required: {hedge_position.contracts} shares of {hedge_position.symbol}")
                         self.logger.info(
                             f"  Hedge delta: {hedge_position.current_delta}")
 
-                # STEP 2: POSITION SIZING - Adjusted to consider hedging
+                # PHASE 5-6: MARGIN CALCULATION AND POSITION SIZING
                 if symbol and position_type.lower() == 'option':
+                    self.logger.info(f"[PHASE 5-6: MARGIN & SIZING] Calculating margin and position size for {symbol}")
+                    
                     # If we have a hedge position, pass it to position sizing
                     # by adding it to the instrument data
                     if hedge_position:
@@ -2565,24 +2636,26 @@ class TradingEngine:
 
                     if sizing_result and 'position_size' in sizing_result:
                         quantity = sizing_result['position_size']
-                        self.logger.debug(
-                            f"Position sizing for {symbol}: Original={signal.get('quantity', 0)}, Calculated={quantity}")
+                        self.logger.info(
+                            f"[PHASE 6: SIZING] Position sizing for {symbol}: Original={signal.get('quantity', 0)}, Calculated={quantity}")
 
                     # If quantity is 0 or None after position sizing, skip this position
                     if not quantity:
                         self.logger.warning(
-                            f"Position sizing returned zero quantity for {symbol}, skipping")
+                            f"[PHASE 6: SIZING] Position sizing returned zero quantity for {symbol}, skipping")
                         continue
 
-                    # STEP 3: MARGIN IMPACT CHECK - With hedging integrated
                     # Check margin impact before executing
+                    self.logger.info(f"[PHASE 5: MARGIN] Checking margin impact for {symbol}")
                     if not self._check_position_margin_impact(symbol, quantity, price, market_data_by_symbol):
                         self.logger.warning(
-                            f"Skipping {symbol} due to margin constraints")
+                            f"[PHASE 5: MARGIN] Skipping {symbol} due to margin constraints")
                         continue
 
-                # STEP 4: EXECUTE THE POSITION
+                # PHASE 7: TRADE EXECUTION - Execute the primary trade
                 if instrument_data:
+                    self.logger.info(f"[PHASE 7: EXECUTION] Executing trade for {symbol}")
+                    
                     # Add position
                     position = self.portfolio.add_position(
                         symbol=symbol,
@@ -2601,7 +2674,7 @@ class TradingEngine:
                         position_value = price * quantity * \
                             100 if position_type == 'option' else price * quantity
                         self.logger.info(
-                            f"Added position: {quantity} {'short' if is_short else 'long'} {position_type} {symbol} @ {price}")
+                            f"[PHASE 7: EXECUTION] Added position: {quantity} {'short' if is_short else 'long'} {position_type} {symbol} @ {price}")
                         self.logger.info(
                             f"  Position value: ${position_value:,.2f}")
 
@@ -2615,8 +2688,10 @@ class TradingEngine:
                             'is_short': is_short  # Store position direction for sign adjustment
                         }
 
-                        # STEP 5: ADD HEDGE POSITION IF NEEDED
+                        # PHASE 7B: TRADE EXECUTION - Add hedge position if needed
                         if hedge_position and self.hedging_manager:
+                            self.logger.info(f"[PHASE 7B: HEDGE EXECUTION] Executing hedge trade for {symbol}")
+                            
                             # Scale hedge position based on actual quantity
                             if quantity != signal.get('quantity', 0) and signal.get('quantity', 0) > 0:
                                 scale_factor = quantity / \
@@ -2626,7 +2701,7 @@ class TradingEngine:
 
                             # Add the hedge position to the portfolio
                             self.logger.info(
-                                f"[TradeManager] Adding hedge position: {hedge_position.contracts} shares of {hedge_position.symbol}")
+                                f"[PHASE 7B: HEDGE EXECUTION] Adding hedge position: {hedge_position.contracts} shares of {hedge_position.symbol}")
 
                             hedge_price = market_data_by_symbol.get(hedge_position.symbol, {}).get(
                                 'MidPrice', hedge_position.current_price)
@@ -2652,7 +2727,7 @@ class TradingEngine:
                             )
                 else:
                     self.logger.warning(
-                        f"Cannot open position {symbol}: No instrument data available")
+                        f"[PHASE 7: EXECUTION] Cannot open position {symbol}: No instrument data available")
 
             # For close positions
             elif action == 'close':
@@ -2663,7 +2738,7 @@ class TradingEngine:
 
                 # Log the signal
                 self.logger.info(
-                    f"[TradeManager] Closing {quantity if quantity else 'all'} {symbol}: {reason}")
+                    f"[PHASE 8: POSITION MANAGEMENT] Closing {quantity if quantity else 'all'} {symbol}: {reason}")
 
                 # Build execution data
                 execution_data = {'date': current_date}
@@ -2672,8 +2747,7 @@ class TradingEngine:
 
                 # Check if we have the position
                 if symbol in self.portfolio.positions:
-                    # STEP 1: FIND LINKED HEDGE POSITION
-                    # Look for corresponding hedge position before closing
+                    # Find linked hedge position before closing
                     hedge_position = None
                     if self.hedging_manager:
                         # Get the position to be closed
@@ -2693,9 +2767,10 @@ class TradingEngine:
                                 if (position_to_close.current_delta * potential_hedge.current_delta < 0):
                                     hedge_position = potential_hedge
                                     self.logger.info(
-                                        f"[TradeManager] Found corresponding hedge position for {symbol}: {underlying_symbol}")
+                                        f"[PHASE 8: POSITION MANAGEMENT] Found corresponding hedge position for {symbol}: {underlying_symbol}")
 
-                    # STEP 2: CLOSE THE MAIN POSITION
+                    # Close the main position
+                    self.logger.info(f"[PHASE 8: POSITION MANAGEMENT] Closing primary position: {symbol}")
                     pnl = self.portfolio.remove_position(
                         symbol=symbol,
                         quantity=quantity,
@@ -2709,7 +2784,7 @@ class TradingEngine:
 
                     # Enhanced logging for PnL with reason
                     self.logger.info(
-                        f"[TradeManager] Closed position - Reason: {close_category} - Detail: {reason} - P&L: ${pnl:,.2f}")
+                        f"[PHASE 8: POSITION MANAGEMENT] Closed position - Reason: {close_category} - Detail: {reason} - P&L: ${pnl:,.2f}")
 
                     # STEP 3: CLOSE THE HEDGE POSITION IF FOUND
                     if hedge_position and hedge_position.symbol in self.portfolio.positions:

@@ -37,6 +37,19 @@ class MarginCalculator:
             # This is likely our custom LoggingManager's logger
             self.logging_manager = logger
 
+        # Log comprehensive initialization parameters
+        if self.logger:
+            self.logger.info("=" * 40)
+            self.logger.info(f"MARGIN CALCULATOR INITIALIZATION: {self.__class__.__name__}")
+            self.logger.info(f"  Max leverage: {self.max_leverage:.2f}x")
+            
+            # Log component logging levels if available
+            if hasattr(self, 'logging_manager') and self.logging_manager:
+                if hasattr(self.logging_manager, 'component_log_levels'):
+                    margin_log_level = self.logging_manager.component_log_levels.get('margin', 'standard')
+                    self.logger.info(f"  Margin log level: {margin_log_level}")
+            self.logger.info("=" * 40)
+
     def _should_log(self, level_name: str) -> bool:
         """
         Check if a message should be logged based on margin log level setting.
@@ -156,6 +169,10 @@ class MarginCalculator:
                     hedge_credit_rate=0.8,  # Standard hedge credit rate
                     logger=getattr(self, 'logger', None)
                 )
+                
+                # Add an attribute to identify this MarginCalculator as using SPAN
+                self.is_delegating_to_span = True
+                self.initial_margin_percentage = getattr(span_calculator, 'initial_margin_percentage', 0.1)
                 
                 # Delegate to the SPAN calculator for option positions
                 return span_calculator.calculate_position_margin(position)
@@ -630,21 +647,23 @@ class SPANMarginCalculator(MarginCalculator):
         self.otm_scaling_enabled = otm_scaling_enabled
         self.otm_minimum_scaling = otm_minimum_scaling
         
-        # Log initialization parameters
+        # Log initialization parameters in a standardized format
         if self.logger:
-            self.logger.info(f"[SPAN Margin] Initialized SPANMarginCalculator with parameters:")
-            self.logger.info(f"  max_leverage: {max_leverage:.2f}")
-            self.logger.info(f"  volatility_multiplier: {volatility_multiplier:.2f}")
-            self.logger.info(f"  initial_margin_percentage: {initial_margin_percentage:.4f} ({initial_margin_percentage*100:.2f}%)")
-            self.logger.info(f"  maintenance_margin_percentage: {maintenance_margin_percentage:.4f} ({maintenance_margin_percentage*100:.2f}%)")
-            self.logger.info(f"  hedge_credit_rate: {hedge_credit_rate:.2f}")
-            self.logger.info(f"  price_move_pct: {price_move_pct:.2f} ({price_move_pct*100:.0f}%)")
-            self.logger.info(f"  vol_shift_pct: {vol_shift_pct:.2f} ({vol_shift_pct*100:.0f}%)")
-            self.logger.info(f"  gamma_scaling_factor: {gamma_scaling_factor:.2f}")
-            self.logger.info(f"  min_scan_risk_percentage: {min_scan_risk_percentage:.2f} ({min_scan_risk_percentage*100:.0f}%)")
-            self.logger.info(f"  max_margin_to_premium_ratio: {max_margin_to_premium_ratio:.1f}x")
-            self.logger.info(f"  otm_scaling_enabled: {otm_scaling_enabled}")
-            self.logger.info(f"  otm_minimum_scaling: {otm_minimum_scaling:.2f} ({otm_minimum_scaling*100:.0f}%)")
+            self.logger.info("=" * 40)
+            self.logger.info(f"SPAN MARGIN CALCULATOR INITIALIZATION: {self.__class__.__name__}")
+            self.logger.info(f"  Max leverage: {max_leverage:.2f}x")
+            self.logger.info(f"  Volatility multiplier: {volatility_multiplier:.2f}")
+            self.logger.info(f"  Initial margin %: {initial_margin_percentage:.2%}")
+            self.logger.info(f"  Maintenance margin %: {maintenance_margin_percentage:.2%}")
+            self.logger.info(f"  Hedge credit rate: {hedge_credit_rate:.2f} ({hedge_credit_rate*100:.0f}%)")
+            self.logger.info(f"  Price move %: {price_move_pct:.2%}")
+            self.logger.info(f"  Volatility shift %: {vol_shift_pct:.2%}")
+            self.logger.info(f"  Gamma scaling factor: {gamma_scaling_factor:.2f}")
+            self.logger.info(f"  Min scan risk %: {min_scan_risk_percentage:.2%}")
+            self.logger.info(f"  Max margin/premium ratio: {max_margin_to_premium_ratio:.1f}x")
+            self.logger.info(f"  OTM scaling enabled: {otm_scaling_enabled}")
+            self.logger.info(f"  OTM minimum scaling: {otm_minimum_scaling:.2%}")
+            self.logger.info("=" * 40)
             
             # Warn if the initial_margin_percentage seems too low
             if initial_margin_percentage < 0.01:

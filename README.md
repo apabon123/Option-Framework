@@ -12,6 +12,7 @@ This repository contains several README files that provide detailed documentatio
 
 - **[Main Documentation](README.md)** - This file, providing an overview of the entire system
 - **[Documentation Structure Guide](docs/README_STRUCTURE.md)** - Explains how documentation is organized
+- **[Trading Flow Documentation](docs/README_TRADING_FLOW.md)** - Complete trading lifecycle flow
 - **[Margin System Documentation](docs/README_MARGIN.md)** - Details of the margin calculation system
 - **[Strategy Documentation](docs/README_STRATEGIES.md)** - Information about implemented strategies
 - **[Position Management Documentation](docs/README_POSITION.md)** - Details of position tracking and management
@@ -40,6 +41,27 @@ python Main.py -s ThetaDecayStrategy
 ```
 
 ## Recent Changes
+
+### March 25, 2024
+
+- **Improved Log Output**: All strategies now save log files to the output directory specified in the config file.
+- **Optimized File Analysis**: Added `--skip-analysis` flag to all runner scripts to speed up repeated runs.
+- **Code Organization**: 
+  - Moved `SimpleLoggingManager` to the `utils` directory
+  - Updated all runner scripts to use the new location
+  - All strategy runners now properly initialize strategy instances
+
+### Usage Example
+
+Run a strategy with data analysis (first run):
+```bash
+python runners/run_put_sell_strat.py -c config/strategy/put_sell_config.yaml
+```
+
+Run a strategy with data analysis skipped (faster on subsequent runs):
+```bash
+python runners/run_put_sell_strat.py -c config/strategy/put_sell_config.yaml --skip-analysis
+```
 
 - **Enhanced SPAN Margin Calculator**: Greatly improved the SPAN margin calculation system with configurable parameters, vega risk incorporation, proper delta hedging benefits, and partial hedge handling
 - **Configuration-Driven Architecture**: Added YAML configuration for all margin parameters, allowing easy adjustment to match different broker requirements

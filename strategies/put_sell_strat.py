@@ -57,8 +57,17 @@ class PutSellStrat(Strategy):
         # Strategy state variables
         self.last_trade_date = None
         
+        # Enhanced logging of initialization parameters
         if self.logger:
-            self.logger.info(f"[PutSellStrat] Initialized with delta target: {self.delta_target}")
+            self.logger.info("=" * 40)
+            self.logger.info(f"STRATEGY INITIALIZATION: {self.__class__.__name__}")
+            self.logger.info(f"  Delta target: {self.delta_target:.2f}")
+            self.logger.info(f"  Delta tolerance: {self.delta_tolerance:.2f}")
+            self.logger.info(f"  DTE range: {self.days_to_expiry_min}-{self.days_to_expiry_max} days")
+            self.logger.info(f"  Profit target: {self.profit_target:.2%}")
+            self.logger.info(f"  Stop loss threshold: {self.stop_loss_threshold:.2f}x")
+            self.logger.info(f"  Close when DTE <= {self.close_days_to_expiry} days")
+            self.logger.info("=" * 40)
     
     def generate_signals(self, current_date: datetime, daily_data: pd.DataFrame) -> List[Dict[str, Any]]:
         """

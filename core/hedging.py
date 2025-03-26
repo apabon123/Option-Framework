@@ -67,20 +67,41 @@ class HedgingManager:
         self.current_hedge_delta = 0
         self.current_dollar_delta = 0
         
-        # Log initialization
-        if self.enable_hedging:
-            self.logger.info(f"[HedgingManager] Initialized with {self.hedge_mode} mode")
+        # Log initialization in a standardized format
+        if self.logger:
+            self.logger.info("=" * 40)
+            self.logger.info("HEDGING MANAGER INITIALIZATION")
             
-            if self.hedge_mode == 'ratio':
-                self.logger.info(f"  Target delta ratio: {self.target_delta_ratio:.2f}")
-            else:  # constant mode
-                self.logger.info(f"  Target portfolio delta: {self.target_portfolio_delta:.2f}")
+            if self.enable_hedging:
+                self.logger.info(f"  Hedging: Enabled")
+                self.logger.info(f"  Hedge mode: {self.hedge_mode}")
                 
-            self.logger.info(f"  Delta tolerance: {self.delta_tolerance:.2f}")
-            self.logger.info(f"  Hedge symbol: {self.hedge_symbol}")
-            self.logger.info(f"  Hedge with underlying price: {self.hedge_with_underlying}")
-        else:
-            self.logger.info("[HedgingManager] Hedging disabled")
+                if self.hedge_mode == 'ratio':
+                    self.logger.info(f"  Target delta ratio: {self.target_delta_ratio:.2f}")
+                else:  # constant mode
+                    self.logger.info(f"  Target portfolio delta: {self.target_portfolio_delta:.2f}")
+                    
+                self.logger.info(f"  Delta tolerance: {self.delta_tolerance:.2f}")
+                self.logger.info(f"  Hedge symbol: {self.hedge_symbol}")
+                self.logger.info(f"  Hedge with underlying: {self.hedge_with_underlying}")
+                self.logger.info(f"  Max hedge ratio: {self.max_hedge_ratio:.2f}x")
+                
+                # Log additional hedging parameters if present
+                rebalance_threshold = config.get('rebalance_threshold', None)
+                if rebalance_threshold is not None:
+                    self.logger.info(f"  Rebalance threshold: {rebalance_threshold:.2f}")
+                    
+                min_hedge_size = config.get('min_hedge_size', None)
+                if min_hedge_size is not None:
+                    self.logger.info(f"  Min hedge size: {min_hedge_size}")
+                    
+                hedge_interval = config.get('hedge_interval', None)
+                if hedge_interval is not None:
+                    self.logger.info(f"  Hedge interval: {hedge_interval} days")
+            else:
+                self.logger.info(f"  Hedging: Disabled")
+                
+            self.logger.info("=" * 40)
     
     def calculate_hedge_requirements(self, market_data: pd.DataFrame, current_date: Optional[datetime] = None) -> Dict[str, Any]:
         """
@@ -886,3 +907,203 @@ class HedgingManager:
         self.logger.debug(f"Hedge Delta: {hedge_position.current_delta}, Dollar Delta: ${dollar_delta:.2f}")
         
         return hedge_position
+
+    # Add a new method to create a theoretical hedge position for an option position
+    def create_theoretical_hedge_position(self, option_position) -> Optional[Position]:
+        """
+        Create a theoretical hedge position for a given option position.
+        This is used for margin calculations before actual execution.
+        
+        Args:
+            option_position: The option position to hedge
+            
+        Returns:
+            Position: A theoretical hedge position (not added to portfolio)
+        """
+        if not option_position:
+            return None
+            
+        # Get delta from the option position
+        option_delta = option_position.current_delta if hasattr(option_position, 'current_delta') else 0
+        
+        # Skip if delta is zero
+        if option_delta == 0:
+            return None
+            
+        # Get number of contracts
+        contracts = option_position.contracts if hasattr(option_position, 'contracts') else 1
+        
+        # Calculate total position delta
+        position_delta = option_delta * contracts
+        
+        # Calculate hedge delta (opposite of option delta)
+        hedge_delta = -position_delta
+        
+        # Convert to hedge shares
+        hedge_shares = int(round(abs(hedge_delta) * 100))  # 100 shares per contract
+        
+        # Skip if hedge size is too small
+        if hedge_shares < 1:
+            return None
+            
+        # Determine hedge direction
+        is_short = hedge_delta < 0  # Short if delta is negative
+        
+        # Get underlying symbol and price
+        if hasattr(option_position, 'underlying') and option_position.underlying:
+            underlying_symbol = option_position.underlying
+        elif hasattr(option_position, 'instrument_data') and option_position.instrument_data:
+            underlying_symbol = option_position.instrument_data.get('UnderlyingSymbol', self.hedge_symbol)
+        else:
+            underlying_symbol = self.hedge_symbol
+            
+        # Get underlying price
+        if hasattr(option_position, 'underlying_price') and option_position.underlying_price > 0:
+            underlying_price = option_position.underlying_price
+        elif hasattr(option_position, 'instrument_data') and option_position.instrument_data:
+            underlying_price = option_position.instrument_data.get('UnderlyingPrice', 0)
+        else:
+            # In a real scenario, we would fetch the price from market data
+            # For this theoretical calculation, we'll use a placeholder
+            underlying_price = 100  # Placeholder
+            
+        # Log the hedge position details
+        if self.logger:
+            self.logger.info(f"[HedgingManager] Creating theoretical hedge for {option_position.symbol}")
+            self.logger.info(f"  Option delta: {option_delta:.4f} × {contracts} contracts = {position_delta:.4f}")
+            self.logger.info(f"  Hedge delta needed: {hedge_delta:.4f}")
+            self.logger.info(f"  Hedge shares: {hedge_shares} of {underlying_symbol} at ${underlying_price:.2f}")
+            self.logger.info(f"  Direction: {'Short' if is_short else 'Long'}")
+            
+        # Create the hedge position
+        from .position import Position
+        
+        hedge_position = Position(
+            symbol=underlying_symbol,
+            contracts=hedge_shares,
+            entry_price=underlying_price,
+            current_price=underlying_price,
+            is_short=is_short,
+            position_type='stock',
+            logger=self.logger
+        )
+        
+        # Set the delta explicitly
+        hedge_position.current_delta = -hedge_shares if is_short else hedge_shares
+        
+        return hedge_position
+    
+    def create_hedged_position_pair(self, option_position) -> Dict[str, Position]:
+        """
+        Create a pair of positions (option + hedge) for margin calculation.
+        
+        Args:
+            option_position: The option position to hedge
+            
+        Returns:
+            dict: Dictionary with both positions keyed by symbol
+        """
+        # Create a theoretical hedge position
+        hedge_position = self.create_theoretical_hedge_position(option_position)
+        
+        # Create the pair dictionary
+        positions_dict = {option_position.symbol: option_position}
+        
+        # Add hedge position if it exists
+        if hedge_position:
+            positions_dict[hedge_position.symbol] = hedge_position
+            
+        return positions_dict
+    
+    def calculate_margin_for_hedged_option(self, option_position, margin_calculator) -> Dict[str, Any]:
+        """
+        Calculate margin for an option position with its theoretical hedge.
+        
+        Args:
+            option_position: The option position to evaluate
+            margin_calculator: The margin calculator to use
+            
+        Returns:
+            dict: Margin calculation results including hedging benefits
+        """
+        # Create the hedged position pair
+        positions_dict = self.create_hedged_position_pair(option_position)
+        
+        # Calculate margin using portfolio approach
+        margin_result = margin_calculator.calculate_portfolio_margin(positions_dict)
+        
+        return margin_result
+        
+    # Add a method to calculate theoretical margin for a new option before adding it
+    def calculate_theoretical_margin(self, option_data: Dict[str, Any], quantity: int) -> Dict[str, float]:
+        """
+        Calculate theoretical margin for a new option position with hedging.
+        
+        Args:
+            option_data: Option data dictionary 
+            quantity: Number of contracts
+            
+        Returns:
+            dict: Dictionary with margin amounts and related metrics
+        """
+        # Create a temporary option position
+        from .position import OptionPosition
+        
+        # Extract key option data
+        symbol = option_data.get('symbol', option_data.get('OptionSymbol', 'Unknown'))
+        price = option_data.get('price', option_data.get('MidPrice', option_data.get('Ask', 0)))
+        underlying_price = option_data.get('UnderlyingPrice', 0)
+        delta = option_data.get('Delta', 0)
+        option_type = option_data.get('Type', 'P' if 'P' in symbol else 'C')
+        strike = option_data.get('Strike', 0)
+        expiry = option_data.get('Expiration', None)
+        
+        # Prepare option data for position creation
+        position_data = {
+            'Symbol': symbol,
+            'UnderlyingSymbol': option_data.get('UnderlyingSymbol', 'SPY'),
+            'UnderlyingPrice': underlying_price,
+            'Type': option_type,
+            'Strike': strike,
+            'Expiration': expiry,
+        }
+        
+        # Create the temporary option position
+        temp_position = OptionPosition(
+            symbol=symbol,
+            option_data=position_data,
+            contracts=quantity,
+            entry_price=price,
+            current_price=price,
+            is_short=True,  # Assuming short positions for selling options
+            logger=self.logger
+        )
+        
+        # Set greeks on the position
+        temp_position.current_delta = delta
+        temp_position.current_gamma = option_data.get('Gamma', 0)
+        temp_position.current_theta = option_data.get('Theta', 0)
+        temp_position.current_vega = option_data.get('Vega', 0)
+        
+        # Ensure underlying price is set
+        if temp_position.underlying_price == 0 and underlying_price > 0:
+            temp_position.underlying_price = underlying_price
+            
+        # Get the portfolio's margin calculator
+        margin_calculator = None
+        if self.portfolio and hasattr(self.portfolio, 'margin_calculator'):
+            margin_calculator = self.portfolio.margin_calculator
+        else:
+            # Create a temporary margin calculator
+            from .margin import SPANMarginCalculator
+            margin_calculator = SPANMarginCalculator(
+                max_leverage=12.0,
+                hedge_credit_rate=0.8,
+                logger=self.logger
+            )
+            
+        # Calculate margin with hedging
+        margin_result = self.calculate_margin_for_hedged_option(temp_position, margin_calculator)
+        
+        # Return the calculation results
+        return margin_result

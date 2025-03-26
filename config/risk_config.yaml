@@ -5,10 +5,10 @@
 risk:
   # Risk limits for all managers
   risk_limits:
-    max_position_size: 10  # Maximum position size in contracts/shares
+    max_position_size: 100  # Maximum position size in contracts/shares
     min_position_size: 1   # Minimum position size in contracts/shares
-    position_limit_pct: 0.20  # Maximum position size as percentage of equity
-    max_daily_loss: 0.02  # Maximum daily loss as percentage of equity
+    position_limit_pct: 0.25  # Maximum position size as percentage of equity
+    max_daily_loss: 0.15  # Maximum daily loss as percentage of equity
     concentration_limit: 0.40  # Maximum concentration in a single position
   
   # Risk manager type (volatility, sharpe, adaptive, combined)
@@ -65,9 +65,9 @@ risk_metrics:
   
   # Minimum periods required for calculations
   min_periods:
-    short: 15    # Minimum periods for short window
-    medium: 45   # Minimum periods for medium window
-    long: 180    # Minimum periods for long window
+    short: 5    # Minimum periods for short window
+    medium: 5   # Minimum periods for medium window
+    long: 5    # Minimum periods for long window
   
   # Risk-free rate for Sharpe ratio calculation
   risk_free_rate: 0.02  # Annual risk-free rate (2%)

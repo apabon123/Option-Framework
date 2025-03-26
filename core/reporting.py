@@ -306,26 +306,26 @@ class ReportingSystem:
         trade_chart = self.generate_trade_distribution_chart(trades)
         
         # Create HTML template
-        html = f"""
+        html = """
         <!DOCTYPE html>
         <html>
         <head>
             <title>Trading Strategy Report</title>
             <style>
-                body {{ font-family: Arial, sans-serif; margin: 20px; }}
-                h1, h2 {{ color: #333; }}
-                .container {{ max-width: 1200px; margin: 0 auto; }}
-                .metrics {{ display: flex; flex-wrap: wrap; margin-bottom: 20px; }}
-                .metric-card {{ background-color: #f5f5f5; border-radius: 5px; padding: 15px; margin: 10px; min-width: 200px; }}
-                .metric-value {{ font-size: 24px; font-weight: bold; color: #3a78b5; }}
-                .metric-name {{ color: #666; }}
-                .chart {{ margin: 20px 0; }}
-                table {{ width: 100%; border-collapse: collapse; }}
-                th, td {{ padding: 8px; text-align: left; border-bottom: 1px solid #ddd; }}
-                th {{ background-color: #f2f2f2; }}
-                tr:hover {{ background-color: #f5f5f5; }}
-                .positive {{ color: green; }}
-                .negative {{ color: red; }}
+                body { font-family: Arial, sans-serif; margin: 20px; }
+                h1, h2 { color: #333; }
+                .container { max-width: 1200px; margin: 0 auto; }
+                .metrics { display: flex; flex-wrap: wrap; margin-bottom: 20px; }
+                .metric-card { background-color: #f5f5f5; border-radius: 5px; padding: 15px; margin: 10px; min-width: 200px; }
+                .metric-value { font-size: 24px; font-weight: bold; color: #3a78b5; }
+                .metric-name { color: #666; }
+                .chart { margin: 20px 0; }
+                table { width: 100%; border-collapse: collapse; }
+                th, td { padding: 8px; text-align: left; border-bottom: 1px solid #ddd; }
+                th { background-color: #f2f2f2; }
+                tr:hover { background-color: #f5f5f5; }
+                .positive { color: green; }
+                .negative { color: red; }
             </style>
         </head>
         <body>
@@ -339,18 +339,26 @@ class ReportingSystem:
         
         # Add performance metrics
         for name, value in performance_metrics.items():
-            # Format based on metric type
-            formatted_value = value
-            if name in ['return', 'cagr', 'volatility']:
-                formatted_value = f"{value:.2%}"
-            elif name in ['sharpe_ratio', 'sortino_ratio']:
-                formatted_value = f"{value:.2f}"
-            elif name in ['max_drawdown']:
-                formatted_value = f"{value:.2%}"
-            elif name in ['profit_factor', 'win_rate']:
-                formatted_value = f"{value:.2f}"
+            # Check for dictionary or complex objects that can't be formatted with :,.2f
+            if isinstance(value, dict) or not isinstance(value, (int, float)):
+                # For dictionaries, use a simpler representation
+                formatted_value = str(value)
             else:
-                formatted_value = f"{value:,.2f}"
+                # Format based on metric type
+                if name in ['return', 'cagr', 'volatility']:
+                    formatted_value = f"{value:.2%}"
+                elif name in ['sharpe_ratio', 'sortino_ratio']:
+                    formatted_value = f"{value:.2f}"
+                elif name in ['max_drawdown']:
+                    formatted_value = f"{value:.2%}"
+                elif name in ['profit_factor', 'win_rate']:
+                    formatted_value = f"{value:.2f}"
+                else:
+                    # Ensure value is a float or int before applying numeric formatting
+                    if isinstance(value, (int, float)):
+                        formatted_value = f"{value:,.2f}"
+                    else:
+                        formatted_value = str(value)
                 
             html += f"""
                     <div class="metric-card">
@@ -530,36 +538,94 @@ class ReportingSystem:
         output.write(f"  Hedge PnL: ${hedge_pnl['total']:.2f}\n")
         
         # Trade and Position Information
-        open_trades = len(portfolio.get_open_positions())
+        try:
+            # Try to use get_open_positions method if it exists
+            if hasattr(portfolio, 'get_open_positions'):
+                open_trades = len(portfolio.get_open_positions())
+            else:
+                # Fallback to using the positions dictionary directly
+                open_trades = len(portfolio.positions)
+        except Exception as e:
+            self.logger.warning(f"Error getting open positions: {e}")
+            open_trades = 0
+            
         position_exposure = portfolio.get_total_position_exposure()
         nlv = portfolio.get_net_liquidation_value()
-        cash_balance = portfolio.get_cash_balance()
-        total_liability = portfolio.get_total_liability()
-        self_hedge = portfolio.get_hedge_value()
         
-        output.write(f"Open Trades: {open_trades}\n")
-        output.write(f"Total Position Exposure: {position_exposure:.1%} of NLV\n")
-        output.write(f"Net Liq: ${nlv:.2f}\n")
+        # Get the cash balance directly from the portfolio attribute
+        cash_balance = portfolio.cash_balance if hasattr(portfolio, 'cash_balance') else 0
+        
+        # Get total liability if the method exists
+        try:
+            total_liability = portfolio.get_total_liability() if hasattr(portfolio, 'get_total_liability') else 0
+        except Exception as e:
+            self.logger.warning(f"Error getting total liability: {e}")
+            total_liability = 0
+        
+        # Portfolio Composition
+        output.write("\nPortfolio Composition:\n")
+        output.write(f"  Net Liquidation Value (NLV): ${nlv:.2f}\n")
         output.write(f"  Cash Balance: ${cash_balance:.2f}\n")
         output.write(f"  Total Liability: ${total_liability:.2f}\n")
-        output.write(f"  Self Hedge (Hedge PnL): ${self_hedge:.2f}\n")
+        output.write(f"  Open Positions: {open_trades}\n")
+        output.write(f"  Position Exposure: {position_exposure:.2%}\n")
         
         # Margin Information
-        total_margin = portfolio.get_total_margin_requirement()
-        available_margin = portfolio.get_available_margin()
-        margin_based_leverage = portfolio.get_margin_based_leverage()
+        try:
+            total_margin = portfolio.calculate_margin_requirement() if hasattr(portfolio, 'calculate_margin_requirement') else 0
+        except Exception as e:
+            self.logger.warning(f"Error calculating margin requirement: {e}")
+            total_margin = 0
+        
+        try:
+            available_margin = portfolio.get_available_margin() if hasattr(portfolio, 'get_available_margin') else 0
+        except Exception as e:
+            self.logger.warning(f"Error getting available margin: {e}")
+            available_margin = 0
+        
+        # Calculate margin-based leverage
+        margin_based_leverage = total_margin / nlv if nlv > 0 else 0
         
         output.write(f"Total Margin Requirement: ${total_margin:.2f}\n")
         output.write(f"Available Margin: ${available_margin:.2f}\n")
         output.write(f"Margin-Based Leverage: {margin_based_leverage:.2f}\n")
         
         # Portfolio Greek Risk Metrics
-        option_delta = portfolio.get_option_delta()
-        hedge_delta = portfolio.get_hedge_delta()
-        total_delta = portfolio.get_total_delta()
-        gamma = portfolio.get_gamma()
-        theta = portfolio.get_theta()
-        vega = portfolio.get_vega()
+        try:
+            option_delta = portfolio.get_option_delta() if hasattr(portfolio, 'get_option_delta') else 0
+        except Exception as e:
+            self.logger.warning(f"Error getting option delta: {e}")
+            option_delta = 0
+        
+        try:
+            hedge_delta = portfolio.get_hedge_delta() if hasattr(portfolio, 'get_hedge_delta') else 0
+        except Exception as e:
+            self.logger.warning(f"Error getting hedge delta: {e}")
+            hedge_delta = 0
+        
+        try:
+            total_delta = portfolio.get_total_delta() if hasattr(portfolio, 'get_total_delta') else 0
+        except Exception as e:
+            self.logger.warning(f"Error getting total delta: {e}")
+            total_delta = 0
+        
+        try:
+            gamma = portfolio.get_gamma() if hasattr(portfolio, 'get_gamma') else 0
+        except Exception as e:
+            self.logger.warning(f"Error getting gamma: {e}")
+            gamma = 0
+        
+        try:
+            theta = portfolio.get_theta() if hasattr(portfolio, 'get_theta') else 0
+        except Exception as e:
+            self.logger.warning(f"Error getting theta: {e}")
+            theta = 0
+        
+        try:
+            vega = portfolio.get_vega() if hasattr(portfolio, 'get_vega') else 0
+        except Exception as e:
+            self.logger.warning(f"Error getting vega: {e}")
+            vega = 0
         
         output.write("\nPortfolio Greek Risk:\n")
         output.write(f"  Option Delta: {option_delta:.3f} (${option_delta * 100 * 100:.2f})\n")
@@ -570,102 +636,119 @@ class ReportingSystem:
         output.write(f"  Vega: ${vega:.2f} per 1% IV\n")
         
         # Rolling Metrics
-        metrics = portfolio.get_rolling_metrics()
-        
-        output.write("\nRolling Metrics:\n")
-        output.write(f"  Expanding Window (all obs, min 5 required): Sharpe: {metrics.get('expanding_sharpe', 0):.2f}, " +
-                    f"Volatility: {metrics.get('expanding_volatility', 0):.2%}\n")
-        output.write(f"  Short Window (21 days, rolling): Sharpe: {metrics.get('short_sharpe', 0):.2f}, " +
-                    f"Volatility: {metrics.get('short_volatility', 0):.2%}\n")
-        output.write(f"  Medium Window (63 days, rolling): Sharpe: {metrics.get('medium_sharpe', 0):.2f}, " +
-                    f"Volatility: {metrics.get('medium_volatility', 0):.2%}\n")
-        output.write(f"  Long Window (252 days, rolling): Sharpe: {metrics.get('long_sharpe', 0):.2f}, " +
-                    f"Volatility: {metrics.get('long_volatility', 0):.2%}\n")
+        try:
+            metrics = portfolio.get_rolling_metrics() if hasattr(portfolio, 'get_rolling_metrics') else {}
+            
+            if metrics:
+                output.write("\nRolling Metrics:\n")
+                output.write(f"  Expanding Window (all obs, min 5 required): Sharpe: {metrics.get('expanding_sharpe', 0):.2f}, " +
+                            f"Volatility: {metrics.get('expanding_volatility', 0):.2%}\n")
+                output.write(f"  Short Window (21 days, rolling): Sharpe: {metrics.get('short_sharpe', 0):.2f}, " +
+                            f"Volatility: {metrics.get('short_volatility', 0):.2%}\n")
+                output.write(f"  Medium Window (63 days, rolling): Sharpe: {metrics.get('medium_sharpe', 0):.2f}, " +
+                            f"Volatility: {metrics.get('medium_volatility', 0):.2%}\n")
+                output.write(f"  Long Window (252 days, rolling): Sharpe: {metrics.get('long_sharpe', 0):.2f}, " +
+                            f"Volatility: {metrics.get('long_volatility', 0):.2%}\n")
+        except Exception as e:
+            self.logger.warning(f"Error generating rolling metrics: {e}")
+            import traceback
+            self.logger.debug(traceback.format_exc())
         
         output.write("-" * 50 + "\n")
         
         # Open Trades Table
-        open_positions = portfolio.get_open_positions()
-        if open_positions:
-            output.write("\nOpen Trades Table:\n")
-            output.write("-" * 120 + "\n")
-            output.write(f"{'Symbol':<15} {'Contracts':>10} {'Entry':>7} {'Current':>8} {'Value':>10} {'NLV%':>5} {'Underlying':>10} " +
-                         f"{'Delta':>10} {'Gamma':>10} {'Theta':>10} {'Vega':>10} {'Margin':>10} {'DTE':>5}\n")
-            output.write("-" * 120 + "\n")
-            
-            total_value = 0
-            total_margin = 0
-            
-            for pos in open_positions:
-                symbol = pos.get_symbol() if hasattr(pos, 'get_symbol') else pos.symbol
-                contracts = pos.get_quantity() if hasattr(pos, 'get_quantity') else pos.contracts
-                entry_price = pos.get_entry_price() if hasattr(pos, 'get_entry_price') else pos.avg_entry_price
-                current_price = pos.get_current_price() if hasattr(pos, 'get_current_price') else pos.current_price
+        try:
+            # Try to use get_open_positions method if it exists
+            if hasattr(portfolio, 'get_open_positions'):
+                open_positions = portfolio.get_open_positions()
+            else:
+                # Fallback to using the positions dictionary directly
+                open_positions = list(portfolio.positions.values())
                 
-                # Calculate position value
-                if hasattr(pos, 'get_market_value'):
-                    value = pos.get_market_value()
-                else:
-                    # Check if this is an option position
-                    is_option = hasattr(pos, 'option_symbol') or hasattr(pos, 'strike') or hasattr(pos, 'expiration')
-                    value = current_price * contracts * (100 if is_option else 1)
+            if open_positions:
+                output.write("\nOpen Trades Table:\n")
+                output.write("-" * 120 + "\n")
+                output.write(f"{'Symbol':<15} {'Contracts':>10} {'Entry':>7} {'Current':>8} {'Value':>10} {'NLV%':>5} {'Underlying':>10} " +
+                            f"{'Delta':>10} {'Gamma':>10} {'Theta':>10} {'Vega':>10} {'Margin':>10} {'DTE':>5}\n")
+                output.write("-" * 120 + "\n")
                 
-                nlv_pct = value / nlv * 100 if nlv else 0
+                total_value = 0
+                total_margin = 0
                 
-                # Get underlying price
-                if hasattr(pos, 'get_underlying_price'):
-                    underlying_price = pos.get_underlying_price()
-                else:
-                    underlying_price = pos.underlying_price if hasattr(pos, 'underlying_price') else 0
+                for pos in open_positions:
+                    symbol = pos.get_symbol() if hasattr(pos, 'get_symbol') else pos.symbol
+                    contracts = pos.get_quantity() if hasattr(pos, 'get_quantity') else pos.contracts
+                    entry_price = pos.get_entry_price() if hasattr(pos, 'get_entry_price') else pos.avg_entry_price
+                    current_price = pos.get_current_price() if hasattr(pos, 'get_current_price') else pos.current_price
+                    
+                    # Calculate position value
+                    if hasattr(pos, 'get_market_value'):
+                        value = pos.get_market_value()
+                    else:
+                        # Check if this is an option position
+                        is_option = hasattr(pos, 'option_symbol') or hasattr(pos, 'strike') or hasattr(pos, 'expiration')
+                        value = current_price * contracts * (100 if is_option else 1)
+                    
+                    nlv_pct = value / nlv * 100 if nlv else 0
+                    
+                    # Get underlying price
+                    if hasattr(pos, 'get_underlying_price'):
+                        underlying_price = pos.get_underlying_price()
+                    else:
+                        underlying_price = pos.underlying_price if hasattr(pos, 'underlying_price') else 0
+                    
+                    # Get delta
+                    if hasattr(pos, 'get_delta'):
+                        delta = pos.get_delta()
+                    else:
+                        delta = pos.current_delta if hasattr(pos, 'current_delta') else 0
+                    
+                    # Get gamma
+                    if hasattr(pos, 'get_gamma'):
+                        gamma = pos.get_gamma()
+                    else:
+                        gamma = pos.current_gamma if hasattr(pos, 'current_gamma') else 0
+                    
+                    # Get theta
+                    if hasattr(pos, 'get_theta'):
+                        theta = pos.get_theta()
+                    else:
+                        theta = pos.current_theta if hasattr(pos, 'current_theta') else 0
+                    
+                    # Get vega
+                    if hasattr(pos, 'get_vega'):
+                        vega = pos.get_vega()
+                    else:
+                        vega = pos.current_vega if hasattr(pos, 'current_vega') else 0
+                    
+                    # Get margin requirement
+                    if hasattr(pos, 'get_margin_requirement'):
+                        margin = pos.get_margin_requirement()
+                    else:
+                        margin = 0
+                    total_margin += margin
+                    
+                    # Get days to expiry
+                    if hasattr(pos, 'get_days_to_expiry'):
+                        dte = pos.get_days_to_expiry()
+                    else:
+                        dte = pos.days_to_expiry if hasattr(pos, 'days_to_expiry') else 0
+                    
+                    # Write position data
+                    output.write(f"{symbol:<15} {contracts:>10} ${entry_price:>5.2f} ${current_price:>6.2f} " +
+                                f"${value:>8.2f} {nlv_pct:>4.1f}% ${underlying_price:>8.2f} " +
+                                f"{delta:>9.3f} {gamma:>9.6f} ${theta:>8.2f} ${vega:>8.2f} ${margin:>8.0f} {dte:>5}\n")
+                    
+                    total_value += value
                 
-                # Get delta
-                if hasattr(pos, 'get_delta'):
-                    delta = pos.get_delta()
-                else:
-                    delta = pos.current_delta if hasattr(pos, 'current_delta') else 0
-                
-                # Get gamma
-                if hasattr(pos, 'get_gamma'):
-                    gamma = pos.get_gamma()
-                else:
-                    gamma = pos.current_gamma if hasattr(pos, 'current_gamma') else 0
-                
-                # Get theta
-                if hasattr(pos, 'get_theta'):
-                    theta = pos.get_theta()
-                else:
-                    theta = pos.current_theta if hasattr(pos, 'current_theta') else 0
-                
-                # Get vega
-                if hasattr(pos, 'get_vega'):
-                    vega = pos.get_vega()
-                else:
-                    vega = pos.current_vega if hasattr(pos, 'current_vega') else 0
-                
-                # Get margin requirement
-                if hasattr(pos, 'get_margin_requirement'):
-                    margin = pos.get_margin_requirement()
-                else:
-                    margin = 0
-                total_margin += margin
-                
-                # Get days to expiry
-                if hasattr(pos, 'get_days_to_expiry'):
-                    dte = pos.get_days_to_expiry()
-                else:
-                    dte = pos.days_to_expiry if hasattr(pos, 'days_to_expiry') else 0
-                
-                # Write position data
-                output.write(f"{symbol:<15} {contracts:>10} ${entry_price:>5.2f} ${current_price:>6.2f} " +
-                           f"${value:>8.2f} {nlv_pct:>4.1f}% ${underlying_price:>8.2f} " +
-                           f"{delta:>9.3f} {gamma:>9.6f} ${theta:>8.2f} ${vega:>8.2f} ${margin:>8.0f} {dte:>5}\n")
-                
-                total_value += value
-            
-            # Write table footer with totals
-            output.write("-" * 120 + "\n")
-            output.write(f"{'TOTAL':<15} {'':<10} {'':<7} {'':<8} ${total_value:>8.2f} {(total_value / nlv * 100) if nlv else 0:>4.1f}%{'':<31}${total_margin:>8.0f}\n")
-            output.write("-" * 120 + "\n")
+                # Write table footer with totals
+                output.write("-" * 120 + "\n")
+                output.write(f"{'TOTAL':<15} {'':<10} {'':<7} {'':<8} ${total_value:>8.2f} {(total_value / nlv * 100) if nlv else 0:>4.1f}%{'':<31}${total_margin:>8.0f}\n")
+                output.write("-" * 120 + "\n")
+        except Exception as e:
+            self.logger.warning(f"Error generating open trades table: {e}")
+            import traceback
+            self.logger.debug(traceback.format_exc())
         
         output.write("=" * 60 + "\n")
         
@@ -674,15 +757,21 @@ class ReportingSystem:
         log_file_path = None
         
         # Method 1: Try to get it from a trading_engine reference which might have the LoggingManager
-        if hasattr(self, 'trading_engine') and hasattr(self.trading_engine, 'logging_manager'):
-            log_file_path = self.trading_engine.logging_manager.get_log_file_path()
+        if hasattr(self, 'trading_engine') and self.trading_engine is not None and hasattr(self.trading_engine, 'logging_manager') and self.trading_engine.logging_manager is not None:
+            try:
+                log_file_path = self.trading_engine.logging_manager.get_log_file_path()
+            except AttributeError:
+                self.logger.warning("Could not access log_file_path from trading_engine.logging_manager")
         
         # Method 2: Check if logger is actually a LoggingManager
-        elif hasattr(self, 'logger') and hasattr(self.logger, 'get_log_file_path'):
-            log_file_path = self.logger.get_log_file_path()
+        elif hasattr(self, 'logger') and self.logger is not None and hasattr(self.logger, 'get_log_file_path'):
+            try:
+                log_file_path = self.logger.get_log_file_path()
+            except AttributeError:
+                self.logger.warning("Could not access log_file_path from logger")
         
         # Method 3: Check if we can access the log file directly from the logger
-        elif hasattr(self, 'logger') and hasattr(self.logger, 'handlers'):
+        elif hasattr(self, 'logger') and self.logger is not None and hasattr(self.logger, 'handlers'):
             for handler in self.logger.handlers:
                 if isinstance(handler, logging.FileHandler) and hasattr(handler, 'baseFilename'):
                     log_file_path = handler.baseFilename

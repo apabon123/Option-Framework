@@ -75,10 +75,14 @@ class Portfolio:
         # Add daily metrics dictionary for tracking
         self.daily_metrics = {}
         
-        # Log initialization
-        self.logger.info(f"Portfolio initialized with ${initial_capital:,.2f} capital")
-        self.logger.info(f"  Max position size: {max_position_size_pct:.1%} of portfolio")
-        self.logger.info(f"  Max portfolio delta: {max_portfolio_delta:.1%} of portfolio value")
+        # Log initialization parameters in a standardized format
+        self.logger.info("=" * 40)
+        self.logger.info(f"PORTFOLIO INITIALIZATION")
+        self.logger.info(f"  Initial capital: ${initial_capital:,.2f}")
+        self.logger.info(f"  Max position size: {max_position_size_pct:.2%} of portfolio")
+        self.logger.info(f"  Max portfolio delta: {max_portfolio_delta:.2%} of portfolio value")
+        
+        # Log margin calculator details if available
         if self.margin_calculator:
             # Get a user-friendly name for the margin calculator
             calculator_class_name = type(self.margin_calculator).__name__
@@ -90,7 +94,15 @@ class Portfolio:
             elif calculator_class_name == "MarginCalculator":
                 calculator_display_name = "Basic"
             
-            self.logger.info(f"  Using margin calculator: {calculator_display_name}")
+            self.logger.info(f"  Margin calculator: {calculator_display_name}")
+            
+            # Log margin calculator's max leverage if available
+            if hasattr(self.margin_calculator, 'max_leverage'):
+                self.logger.info(f"  Max leverage: {self.margin_calculator.max_leverage:.2f}x")
+        else:
+            self.logger.info("  Margin calculator: None (will be set later)")
+            
+        self.logger.info("=" * 40)
     
     def set_margin_calculator(self, margin_calculator):
         """
@@ -529,11 +541,20 @@ class Portfolio:
                 calc_class_name = type(self.margin_calculator).__name__
                 calc_display_name = calc_class_name
                 
-                if calc_class_name == "SPANMarginCalculator":
+                # Ensure we correctly identify SPAN calculators - improved logic
+                if "SPAN" in calc_class_name:
+                    calc_display_name = "SPAN"
+                elif hasattr(self.margin_calculator, 'initial_margin_percentage'):
+                    calc_display_name = "SPAN"
+                # Check if it's a basic calculator that delegates to SPAN
+                elif hasattr(self.margin_calculator, 'is_delegating_to_span'): 
+                    calc_display_name = "SPAN"
+                elif calc_class_name == "MarginCalculator" and self.has_option_positions():
+                    # Override to SPAN for option portfolios - the MarginCalculator delegates to SPAN internally
                     calc_display_name = "SPAN"
                 elif calc_class_name == "OptionMarginCalculator":
                     calc_display_name = "Option"
-                elif calc_class_name == "MarginCalculator":
+                else:
                     calc_display_name = "Basic"
                     
                 self.logger.debug(f"[Portfolio] Using {calc_display_name} for margin calculation")
@@ -556,7 +577,7 @@ class Portfolio:
                     calc_class_name = type(self.margin_calculator).__name__
                     calc_display_name = calc_class_name
                     
-                    if calc_class_name == "SPANMarginCalculator":
+                    if "SPAN" in calc_class_name or hasattr(self.margin_calculator, 'initial_margin_percentage'):
                         calc_display_name = "SPAN"
                     elif calc_class_name == "OptionMarginCalculator":
                         calc_display_name = "Option"
@@ -566,6 +587,10 @@ class Portfolio:
                     self.logger.debug(f"[Portfolio] Portfolio margin calculation using {calc_display_name}:")
                     self.logger.debug(f"  Total margin: ${total_margin:.2f}")
                     self.logger.debug(f"  Hedging benefits: ${hedging_benefits:.2f}")
+                    # Add extra debug info for troubleshooting
+                    self.logger.debug(f"[Portfolio] DEBUG - Margin calculator in metrics: {type(self.margin_calculator).__name__}")
+                    if hasattr(self.margin_calculator, 'initial_margin_percentage'):
+                        self.logger.debug(f"[Portfolio] DEBUG - Has initial_margin_percentage: {self.margin_calculator.initial_margin_percentage}")
                     
             except Exception as e:
                 # Log the error and fall back to position-level calculation
@@ -1091,10 +1116,37 @@ class Portfolio:
         # If margin calculator is set, use it for consistent margin calculation
         if self.margin_calculator:
             try:
+                # Get a user-friendly name for the margin calculator
+                calc_class_name = type(self.margin_calculator).__name__
+                calc_display_name = calc_class_name
+                
+                # Ensure we correctly identify SPAN calculators - improved logic
+                if "SPAN" in calc_class_name:
+                    calc_display_name = "SPAN"
+                elif hasattr(self.margin_calculator, 'initial_margin_percentage'):
+                    calc_display_name = "SPAN"
+                # Check if it's a basic calculator that delegates to SPAN
+                elif calc_class_name == "MarginCalculator" and self.has_option_positions():
+                    # Override to SPAN for option portfolios - the MarginCalculator delegates to SPAN internally
+                    calc_display_name = "SPAN"
+                elif calc_class_name == "OptionMarginCalculator":
+                    calc_display_name = "Option"
+                else:
+                    calc_display_name = "Basic"
+                
+                if hasattr(self, 'logger'):
+                    self.logger.debug(f"[Portfolio] Using {calc_display_name} for margin calculation")
+                    # Add extra debug info to track the issue
+                    self.logger.debug(f"[Portfolio] DEBUG - Margin calculator actual class: {type(self.margin_calculator).__name__}")
+                    if hasattr(self.margin_calculator, 'initial_margin_percentage'):
+                        self.logger.debug(f"[Portfolio] DEBUG - Has initial_margin_percentage attribute")
+                
                 # Use the portfolio margin calculator's calculate_portfolio_margin method
                 margin_result = self.margin_calculator.calculate_portfolio_margin(self.positions)
                 if hasattr(self, 'logger'):
-                    self.logger.debug(f"[Portfolio] Margin calculation using {type(self.margin_calculator).__name__}")
+                    self.logger.debug(f"[Portfolio] Portfolio margin calculation using {calc_display_name}:")
+                    self.logger.debug(f"  Total margin: ${margin_result.get('total_margin', 0):.2f}")
+                    self.logger.debug(f"  Hedging benefits: ${margin_result.get('hedging_benefits', 0):.2f}")
                     
                 # Return the total margin from the result
                 return margin_result.get('total_margin', 0)
@@ -1103,6 +1155,9 @@ class Portfolio:
                 if hasattr(self, 'logger'):
                     self.logger.error(f"[Portfolio] Error using margin calculator: {e}")
                     self.logger.info("[Portfolio] Falling back to position-level margin calculation")
+        else:
+            if hasattr(self, 'logger'):
+                self.logger.warning(f"[Portfolio] No margin calculator set - using basic position-level calculation")
         
         # If no margin calculator or error, calculate each position's margin separately
         total_margin = 0
@@ -1237,3 +1292,15 @@ class Portfolio:
             metrics['available_margin'] = self.get_available_margin()
             
         return metrics
+
+    def has_option_positions(self) -> bool:
+        """
+        Check if the portfolio contains any option positions.
+        
+        Returns:
+            bool: True if there are any option positions, False otherwise
+        """
+        for position in self.positions.values():
+            if hasattr(position, 'option_type') or getattr(position, 'is_option', False):
+                return True
+        return False

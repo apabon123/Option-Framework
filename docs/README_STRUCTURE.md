@@ -23,6 +23,7 @@ For detailed documentation of specific components, we use separate README files 
 - [`docs/README_POSITION.md`](README_POSITION.md) - Documentation for position management
 - [`docs/README_HEDGING.md`](README_HEDGING.md) - Documentation for the hedging system
 - [`docs/README_CONFIGURATION.md`](README_CONFIGURATION.md) - Guide to configuration options
+- [`docs/README_TRADING_FLOW.md`](README_TRADING_FLOW.md) - Complete trading lifecycle flow
 
 ## Implementation Examples
 

@@ -180,12 +180,44 @@ class PortfolioRebalancer:
         self.logger.info(f"[PortfolioRebalancer] Analyzing margin impact for {contracts} contracts of {symbol} at ${price:.2f}")
         self.logger.info(f"[PortfolioRebalancer] Expected hedge delta: {hedge_delta:.4f}")
         
+        # Check portfolio margin calculator type
+        portfolio_calculator = None
+        portfolio_calculator_type = "None"
+        
+        if hasattr(self.portfolio, 'margin_calculator') and self.portfolio.margin_calculator:
+            portfolio_calculator = self.portfolio.margin_calculator
+            portfolio_calculator_type = type(portfolio_calculator).__name__
+            
+            # Log the type of calculator being used
+            calc_display_name = portfolio_calculator_type
+            if portfolio_calculator_type == "SPANMarginCalculator":
+                calc_display_name = "SPAN"
+            elif portfolio_calculator_type == "OptionMarginCalculator":
+                calc_display_name = "Option"
+            elif portfolio_calculator_type == "MarginCalculator":
+                calc_display_name = "Basic"
+                
+            self.logger.info(f"[PortfolioRebalancer] Portfolio using {calc_display_name} margin calculator")
+        
         # Determine calculation approach - use integrated hedging if available
         using_integrated_hedging = False
         
+        # Prefer using portfolio's SPAN calculator if available, as it provides the most accurate margin
+        if portfolio_calculator_type == "SPANMarginCalculator":
+            self.logger.info(f"[PortfolioRebalancer] Using portfolio's SPAN margin calculator for margin analysis")
+            # Even if we don't use integrated hedging, we'll use the SPAN calculator for position margin
+            self.margin_calculator = portfolio_calculator
+            
         # Check if we have a hedging manager with margin calculation capabilities
         if self.hedging_manager and hasattr(self.hedging_manager, 'calculate_theoretical_margin'):
             using_integrated_hedging = True
+            
+            # If hedging manager has its own SPAN calculator, ensure it's consistent with portfolio
+            if hasattr(self.hedging_manager, 'margin_calculator') and self.hedging_manager.margin_calculator:
+                hedging_calc_type = type(self.hedging_manager.margin_calculator).__name__
+                if hedging_calc_type == "SPANMarginCalculator" and portfolio_calculator_type != "SPANMarginCalculator":
+                    self.logger.warning(f"[PortfolioRebalancer] Hedging manager using {hedging_calc_type} but portfolio using {portfolio_calculator_type}")
+                    self.logger.info(f"[PortfolioRebalancer] Consider updating portfolio to use consistent margin calculator")
         
         total_additional_margin = 0
         

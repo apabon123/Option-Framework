@@ -43,12 +43,30 @@ class RiskManager:
         # Track the most recently calculated margin per contract
         self._last_margin_per_contract = 0
 
-        # Log initialization
+        # Reference to the hedging manager - will be set by trading engine
+        self.hedging_manager = None
+
+        # Log initialization in a standardized format
         if self.logger:
-            self.logger.info("[RiskManager] Initialized")
-            self.logger.info(f"  Max Leverage: {self.max_leverage}x")
-            self.logger.info(f"  Max NLV Percent: {self.max_nlv_percent:.2%}")
-            self.logger.info(f"  Rolling Window: {self.rolling_window} days")
+            self.logger.info("=" * 40)
+            self.logger.info("RISK MANAGER INITIALIZATION")
+            self.logger.info(f"  Max leverage: {self.max_leverage}x")
+            self.logger.info(f"  Max position size: {self.max_nlv_percent:.2%} of NLV")
+            self.logger.info(f"  Rolling window: {self.rolling_window} days")
+            self.logger.info(f"  Target Z-score: {self.target_z:.2f}")
+            self.logger.info(f"  Min Z-score: {self.min_z:.2f}")
+            self.logger.info(f"  Min investment level: {self.min_investment:.2%}")
+            
+            # Log any additional risk parameters if present
+            if 'performance_scaling' in risk_config:
+                self.logger.info("  Performance scaling: Enabled")
+                if 'scaling_factor' in risk_config.get('performance_scaling', {}):
+                    scaling_factor = risk_config['performance_scaling'].get('scaling_factor', 1.0)
+                    self.logger.info(f"  Performance scaling factor: {scaling_factor:.2f}")
+            else:
+                self.logger.info("  Performance scaling: Disabled")
+                
+            self.logger.info("=" * 40)
 
     def calculate_position_size(self, option_data: Dict[str, Any], portfolio_metrics: Dict[str, Any], risk_scaling: float = 1.0) -> int:
         """
@@ -85,6 +103,7 @@ class RiskManager:
             underlying_price = option_data.get('UnderlyingPrice', 0)
             strike = option_data.get('Strike', 0)
             expiry = option_data.get('Expiration', None)
+            delta = option_data.get('Delta', 0)
             option_type = 'C' if 'C' in option_symbol else 'P'
         else:
             # This is a pandas Series
@@ -93,6 +112,7 @@ class RiskManager:
             underlying_price = option_data.get('UnderlyingPrice', 0)
             strike = option_data.get('Strike', 0)
             expiry = option_data.get('Expiration', None)
+            delta = option_data.get('Delta', 0)
             option_type = 'C' if 'C' in option_symbol else 'P'
 
         # Make sure we have a valid price
@@ -100,47 +120,48 @@ class RiskManager:
             self.logger.warning(f"[RiskManager] Option price is 0 for {option_symbol}, cannot calculate position size")
             return 0
 
-        # Check if we have access to portfolio's margin calculator for a more accurate calculation
-        portfolio = portfolio_metrics.get('portfolio', None)
-        margin_calculator = None
-        margin_config = self.config.get('margin_management', {})
-        margin_calculation_method = margin_config.get('margin_calculation_method', 'simple')
-        margin_calculator_type = margin_config.get('margin_calculator_type', 'span').lower()
-        use_portfolio_calculator = margin_config.get('use_portfolio_calculator', True)
-        
-        # Initialize margin_per_contract to a safe default
+        # Initialize margin_per_contract
         margin_per_contract = option_price * 100
         
-        if portfolio and hasattr(portfolio, 'margin_calculator') and use_portfolio_calculator:
-            margin_calculator = portfolio.margin_calculator
-            self.logger.info(f"[Position Sizing] Using portfolio margin calculator ({margin_calculation_method} method)")
-
-            # Check if we have the correct calculator type based on configuration
-            from core.margin import MarginCalculator, OptionMarginCalculator, SPANMarginCalculator
+        # HEDGED MARGIN CALCULATION
+        # Use the hedging manager to calculate margin if available
+        if self.hedging_manager and hasattr(self.hedging_manager, 'calculate_theoretical_margin'):
+            self.logger.info(f"[Position Sizing] Using hedging manager for margin calculation with full hedging benefits")
             
-            if margin_calculator_type == 'span' and not isinstance(margin_calculator, SPANMarginCalculator):
-                self.logger.info(f"[Position Sizing] Converting to SPANMarginCalculator as specified in config")
-                margin_calculator = SPANMarginCalculator(
-                    max_leverage=self.max_leverage,
-                    hedge_credit_rate=0.8,  # Standard hedge credit rate
-                    logger=self.logger
-                )
-            elif margin_calculator_type == 'option' and not isinstance(margin_calculator, OptionMarginCalculator):
-                self.logger.info(f"[Position Sizing] Converting to OptionMarginCalculator as specified in config")
-                margin_calculator = OptionMarginCalculator(
-                    max_leverage=self.max_leverage,
-                    logger=self.logger
-                )
-            elif margin_calculator_type == 'simple' and (
-                isinstance(margin_calculator, SPANMarginCalculator) or 
-                isinstance(margin_calculator, OptionMarginCalculator)
-            ):
-                self.logger.info(f"[Position Sizing] Converting to simple MarginCalculator as specified in config")
-                margin_calculator = MarginCalculator(
-                    max_leverage=self.max_leverage,
-                    logger=self.logger
-                )
+            # Set a test quantity of 1 to calculate per-contract margin
+            test_quantity = 1
+            
+            # Calculate theoretical margin with hedging
+            margin_result = self.hedging_manager.calculate_theoretical_margin(option_data, test_quantity)
+            
+            if margin_result and 'total_margin' in margin_result:
+                hedged_margin = margin_result['total_margin']
+                hedging_benefits = margin_result.get('hedging_benefits', 0)
+                
+                # Convert to per-contract basis
+                if test_quantity > 0:
+                    margin_per_contract = hedged_margin / test_quantity
+                
+                # Log the results
+                self.logger.info(f"[Position Sizing] Hedged margin calculation:")
+                self.logger.info(f"  Total margin for {test_quantity} contract: ${hedged_margin:.2f}")
+                self.logger.info(f"  Hedging benefits: ${hedging_benefits:.2f}")
+                self.logger.info(f"  Margin per contract (with hedging): ${margin_per_contract:.2f}")
+            else:
+                self.logger.warning(f"[Position Sizing] Hedged margin calculation failed, falling back to traditional method")
+                # Continue with traditional calculation below
         else:
+            # TRADITIONAL MARGIN CALCULATION (Keep the existing approach as fallback)
+            self.logger.info(f"[Position Sizing] Using traditional margin calculation approach")
+            
+            # Check if we have access to portfolio's margin calculator
+            portfolio = portfolio_metrics.get('portfolio', None)
+            margin_calculator = None
+            margin_config = self.config.get('margin_management', {})
+            margin_calculation_method = margin_config.get('margin_calculation_method', 'simple')
+            margin_calculator_type = margin_config.get('margin_calculator_type', 'span').lower()
+            use_portfolio_calculator = margin_config.get('use_portfolio_calculator', True)
+            
             # Create a calculator based on configuration if we don't have one from the portfolio
             from core.margin import MarginCalculator, OptionMarginCalculator, SPANMarginCalculator
             

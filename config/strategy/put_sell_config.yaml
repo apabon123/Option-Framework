@@ -75,7 +75,7 @@ portfolio:
 # Logging Configuration
 logging:
   # Logging level: DEBUG, INFO, WARNING, ERROR, CRITICAL
-  level: "DEBUG"
+  level: "INFO"
   
   # Whether to log to file
   file: true
