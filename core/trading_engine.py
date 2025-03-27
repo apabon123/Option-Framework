@@ -2634,6 +2634,47 @@ class TradingEngine:
                             'price': hedge_position.current_price,
                             'is_short': hedge_position.is_short
                         }
+                        
+                        # Also pass the margin we already calculated to avoid redundant calculation
+                        if hasattr(self, 'portfolio') and self.portfolio and hasattr(self.portfolio, 'margin_calculator'):
+                            # Calculate the position margin with the hedge
+                            self.logger.info(f"[Portfolio] Using SPAN margin calculation")
+                            self.logger.info(f"[Position Sizing] Using hedging manager for margin calculation with full hedging benefits")
+                            
+                            # Calculate margin for the combined position (option + hedge)
+                            from core.position import OptionPosition
+                            temp_option_position = OptionPosition(
+                                symbol=symbol,
+                                contracts=1,  # Calculate per contract
+                                entry_price=price,
+                                is_short=is_short,
+                                option_data=instrument_data,
+                                logger=self.logger
+                            )
+                            
+                            # Start SPAN margin calculation
+                            self.logger.info(f"[Margin] Portfolio calculation for 2 positions")
+                            self.logger.info(f"[Margin] Starting SPAN margin calculation for {symbol}")
+                            
+                            # Prepare for margin calculation
+                            positions = {
+                                symbol: temp_option_position,
+                                hedge_position.symbol: hedge_position
+                            }
+                            
+                            # Calculate margin using portfolio's calculator
+                            margin_result = self.portfolio.margin_calculator.calculate_portfolio_margin(positions)
+                            margin_with_hedge = margin_result.get('total_margin', 0)
+                            hedge_benefit = margin_result.get('hedge_benefit', 0)
+                            
+                            # Add margin details to instrument data for position sizing
+                            instrument_data['margin_per_contract'] = margin_with_hedge
+                            instrument_data['hedge_benefit'] = hedge_benefit
+                            
+                            self.logger.info(f"[Position Sizing] Hedged margin calculation:")
+                            self.logger.info(f"  Total margin for 1 contract: ${margin_with_hedge:.2f}")
+                            self.logger.info(f"  Hedging benefits: ${hedge_benefit:.2f}")
+                            self.logger.info(f"  Margin per contract (with hedging): ${margin_with_hedge:.2f}")
 
                     # Perform position sizing with hedging consideration
                     sizing_result = self._position_sizing(
