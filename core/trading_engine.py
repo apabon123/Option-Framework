@@ -2971,6 +2971,13 @@ class TradingEngine:
             else:
                 self.logger.warning(f"Unknown action in signal: {action}")
 
+        # Ensure all positions have their attributes set correctly for margin calculation
+        self._ensure_position_attributes_for_margin()
+        
+        # Calculate margin requirements with updated attributes
+        margin_req = self.calculate_margin_requirement()
+        self.logger.info(f"Updated margin requirement after all signals: ${margin_req:,.2f}")
+
         # Calculate portfolio metrics after executing signals
         portfolio_metrics = self.portfolio.get_portfolio_metrics()
         self.logger.debug(
@@ -3644,6 +3651,194 @@ class TradingEngine:
         
         self.logger.info(f"Prepared market data for {len(self.cached_underlying_prices)} underlying symbols")
         return self.cached_underlying_prices
+
+    def calculate_margin_requirement(self):
+        """
+        Calculate the total margin requirement for the portfolio.
+        This also ensures all positions have current prices and greeks updated.
+        
+        Returns:
+            float: Total margin requirement
+        """
+        # First, make sure all positions have updated underlying prices
+        self._ensure_position_attributes_for_margin()
+        
+        # Then calculate margin as before
+        result = self.portfolio.calculate_margin_requirement()
+        return result
+        
+    def _ensure_position_attributes_for_margin(self):
+        """
+        Ensures all positions have the necessary attributes for margin calculation,
+        particularly making sure underlying prices are properly set for all options.
+        """
+        if not hasattr(self, 'portfolio') or not self.portfolio or not hasattr(self.portfolio, 'positions'):
+            return
+            
+        # First, build a dictionary of underlying prices from stock positions
+        underlying_prices = {}
+        for symbol, position in self.portfolio.positions.items():
+            # If it's a stock/underlying position, add its price to our lookup
+            if hasattr(position, 'position_type') and position.position_type == 'stock':
+                if hasattr(position, 'current_price') and position.current_price > 0:
+                    underlying_prices[symbol] = position.current_price
+                    self.logger.debug(f"Using price for {symbol} from stock position: ${position.current_price:.2f}")
+        
+        # Also add any cached underlying prices
+        if hasattr(self, 'cached_underlying_prices'):
+            for symbol, price in self.cached_underlying_prices.items():
+                if price > 0:
+                    underlying_prices[symbol] = price
+                    self.logger.debug(f"Using cached underlying price for {symbol}: ${price:.2f}")
+                    
+        # Now update options with appropriate underlying prices
+        for symbol, position in self.portfolio.positions.items():
+            # Check if this is an option position that needs an underlying price
+            if (hasattr(position, 'position_type') and position.position_type == 'option' and
+                (not hasattr(position, 'underlying_price') or position.underlying_price <= 0)):
+                
+                # Determine the underlying symbol
+                underlying_symbol = None
+                if hasattr(position, 'underlying') and position.underlying:
+                    underlying_symbol = position.underlying
+                elif hasattr(position, 'underlying_symbol') and position.underlying_symbol:
+                    underlying_symbol = position.underlying_symbol
+                elif hasattr(position, 'instrument_data') and position.instrument_data:
+                    underlying_symbol = position.instrument_data.get('UnderlyingSymbol')
+                # Extract from option symbol if needed
+                elif len(symbol) >= 3 and symbol[:3] in ['SPY', 'QQQ', 'IWM', 'DIA']:
+                    underlying_symbol = symbol[:3]
+                
+                # Set the underlying price if we have it
+                if underlying_symbol and underlying_symbol in underlying_prices:
+                    position.underlying_price = underlying_prices[underlying_symbol]
+                    self.logger.info(f"Updated underlying price for {symbol}: ${position.underlying_price:.2f}")
+                elif 'SPY' in underlying_prices:  # Default to SPY if nothing else found
+                    position.underlying_price = underlying_prices['SPY']
+                    self.logger.warning(f"Using SPY price as default for {symbol}: ${position.underlying_price:.2f}")
+                
+        # Ensure all option positions have required greeks
+        for symbol, position in self.portfolio.positions.items():
+            if hasattr(position, 'position_type') and position.position_type == 'option':
+                # Ensure delta is set - critical for margin calculation
+                if not hasattr(position, 'current_delta') or position.current_delta == 0:
+                    # Try to set from instrument data
+                    if hasattr(position, 'instrument_data') and position.instrument_data:
+                        delta = position.instrument_data.get('Delta', position.instrument_data.get('delta', 0))
+                        if delta != 0:
+                            position.current_delta = delta
+                            self.logger.info(f"Set delta for {symbol} from instrument data: {delta:.4f}")
+
+    def _execute_backtest_cycle(self, trading_day, current_date):
+        """
+        Execute a single backtest cycle for the given trading day.
+        
+        Args:
+            trading_day: Market data for the trading day
+            current_date: Current date of simulation
+            
+        Returns:
+            dict: Results for the trading day
+        """
+        # Start daily cycle
+        self.logger.info(f"[Day {current_date.strftime('%Y-%m-%d')}] Starting trading cycle")
+        
+        # PHASE 1: INITIALIZE
+        try:
+            # Clear today's tracking dictionaries
+            self.today_added_positions = {}
+            self.today_closed_positions = {}
+            
+            # Update the current date
+            self.current_date = current_date
+            
+            # Get realized P&L for the day
+            if hasattr(self, 'portfolio') and self.portfolio:
+                self.realized_daily_pnl = 0  # Reset daily P&L
+            
+            # PHASE 2: POSITION MANAGEMENT
+            # First check exits for existing positions
+            self._check_exit_conditions(trading_day, current_date)
+            
+            # Update the portfolio with latest prices
+            if hasattr(self, 'portfolio') and self.portfolio:
+                # Create a market data dictionary by symbol
+                market_data_by_symbol = self.data_manager.get_market_data_by_symbol(trading_day) if hasattr(self, 'data_manager') else {}
+                
+                # Update positions with market data
+                self.portfolio.update_market_data(market_data_by_symbol, current_date)
+            
+            # Update positions with latest prices and greeks
+            self._update_positions_market_data(trading_day)
+            
+            # PHASE 3: STRATEGY SIGNALS
+            # Get signals from the strategy
+            signals = self.strategy.generate_signals(
+                trading_day, self.portfolio, current_date)
+            
+            # Process strategy signals
+            if signals:
+                self._execute_signals(signals, trading_day, current_date)
+                
+            # Make sure all position attributes are up to date for margin calculation
+            self._ensure_position_attributes_for_margin()
+            
+            # PHASE 9: PORTFOLIO UPDATE
+            # Calculate EOD metrics and margin requirements
+            # Make sure all positions have current prices and Greeks
+            if hasattr(self, 'portfolio') and self.portfolio:
+                try:
+                    # Calculate margin requirements
+                    margin_req = self.calculate_margin_requirement()
+                    self.logger.info(f"EOD Margin requirement: ${margin_req:,.2f}")
+                    
+                    # Get portfolio metrics
+                    portfolio_metrics = self.portfolio.get_portfolio_metrics()
+                    
+                    # Log key metrics
+                    self.logger.info(f"EOD Portfolio value: ${portfolio_metrics['portfolio_value']:,.2f}")
+                    self.logger.info(f"EOD Cash balance: ${portfolio_metrics['cash']:,.2f}")
+                    self.logger.info(f"EOD Net liquidation value: ${portfolio_metrics['net_liquidation_value']:,.2f}")
+                    
+                    # Log position breakdown
+                    position_summary = portfolio_metrics.get('positions_summary', {})
+                    if position_summary:
+                        self.logger.info("EOD Positions summary:")
+                        for symbol, details in position_summary.items():
+                            self.logger.info(f"  {symbol}: {details['quantity']} @ ${details['current_price']:.2f} = ${details['value']:,.2f}")
+                    
+                    # Store metrics
+                    self.daily_metrics[current_date] = portfolio_metrics
+                    
+                except Exception as e:
+                    self.logger.error(f"Error calculating portfolio metrics: {e}")
+                    if self.debug:
+                        import traceback
+                        self.logger.error(traceback.format_exc())
+            
+            # Return stats for the day
+            day_result = {
+                'date': current_date,
+                'portfolio_value': self.portfolio.get_portfolio_value() if hasattr(self, 'portfolio') and self.portfolio else 0,
+                'cash': self.portfolio.cash if hasattr(self, 'portfolio') and self.portfolio else 0,
+                'margin_requirement': margin_req if 'margin_req' in locals() else 0,
+                'positions': len(self.portfolio.positions) if hasattr(self, 'portfolio') and self.portfolio and hasattr(self.portfolio, 'positions') else 0,
+                'realized_pnl': self.realized_daily_pnl if hasattr(self, 'realized_daily_pnl') else 0
+            }
+            
+            return day_result
+        
+        except Exception as e:
+            self.logger.error(f"Error in trading cycle for {current_date}: {e}")
+            if self.debug:
+                import traceback
+                self.logger.error(traceback.format_exc())
+            
+            # Return empty result on error
+            return {
+                'date': current_date,
+                'error': str(e)
+            }
 
 
 if __name__ == "__main__":
