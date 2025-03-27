@@ -854,7 +854,7 @@ class TradingEngine:
             self.logger.info("Preprocessing data...")
             self.data = self.data_manager.preprocess_data(data)
 
-            self.logger.info(
+            self.logger.debug(
                 f"Data loaded: {len(self.data)} rows, {self.data.columns.tolist()}")
             print(
                 f"Preprocessing complete - {len(self.data)} rows ready for trading")
@@ -919,8 +919,8 @@ class TradingEngine:
 
         # Debug: print first few dates to see what format they're in
         if trading_dates:
-            self.logger.info(f"First 5 trading dates: {trading_dates[:5]}")
-            self.logger.info(f"Date type: {type(trading_dates[0])}")
+            self.logger.debug(f"First 5 trading dates: {trading_dates[:5]}")
+            self.logger.debug(f"Date type: {type(trading_dates[0])}")
 
         # Filter by date range
         original_count = len(trading_dates)
@@ -2359,7 +2359,7 @@ class TradingEngine:
         if signals:
             self.logger.info(f"Generated {len(signals)} trading signals")
             for i, signal in enumerate(signals):
-                self.logger.info(f"  Signal {i+1}: {signal}")
+                self.logger.debug(f"  Signal {i+1}: {signal}")
         else:
             self.logger.info("No trading signals generated for today")
         
