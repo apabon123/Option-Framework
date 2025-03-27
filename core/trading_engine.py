@@ -2928,7 +2928,8 @@ class TradingEngine:
                         quantity=quantity,
                         price=price,
                         execution_data=execution_data,
-                        reason=reason
+                        reason=reason,
+                        skip_margin_calc=True  # Skip redundant margin calculation
                     )
 
                     # Categorize the reason for closing
@@ -2957,7 +2958,8 @@ class TradingEngine:
                             quantity=hedge_close_qty,
                             price=hedge_price,
                             execution_data=execution_data,
-                            reason=f"Closing hedge for {symbol}"
+                            reason=f"Closing hedge for {symbol}",
+                            skip_margin_calc=True  # Skip redundant margin calculation
                         )
 
                         self.logger.info(
