@@ -63,17 +63,17 @@ class RiskScaler:
                 self.logger.info(f"  Min investment level: {self.min_investment:.2%}")
             self.logger.info("=" * 40)
 
-    def calculate_risk_scaling(self, returns: Union[pd.Series, List[Dict[str, Any]]]) -> float:
+    def calculate_risk_scaling(self, returns: Union[pd.Series, List[Dict[str, Any]], Dict[str, float]]) -> float:
         """
         Calculate risk scaling factor based on the configured method.
         
         Args:
-            returns: Either a pandas Series of returns or a list of return dictionaries
+            returns: Series, list, or dictionary of returns
             
         Returns:
-            float: Risk scaling factor (1.0 if disabled)
+            float: Risk scaling factor between min_scaling and max_scaling
         """
-        # If risk scaling is disabled, always return 1.0
+        # If risk scaling is disabled, return 1.0
         if not self.enabled:
             return 1.0
             
@@ -85,11 +85,21 @@ class RiskScaler:
             else:
                 self.logger.warning("[RiskScaler] Invalid returns format, using neutral scaling (1.0)")
                 return 1.0
+        elif isinstance(returns, dict):
+            # Convert dictionary to Series
+            if returns:
+                returns_series = pd.Series(list(returns.values()), index=list(returns.keys()))
+            else:
+                self.logger.info("[RiskScaler] Empty returns dictionary, using neutral scaling (1.0)")
+                return 1.0
         else:
             returns_series = returns
             
         # Return 1.0 if we have no returns data
-        if returns_series.empty:
+        if hasattr(returns_series, 'empty') and returns_series.empty:
+            self.logger.info("[RiskScaler] No returns data, using neutral scaling (1.0)")
+            return 1.0
+        elif len(returns_series) == 0:
             self.logger.info("[RiskScaler] No returns data, using neutral scaling (1.0)")
             return 1.0
             

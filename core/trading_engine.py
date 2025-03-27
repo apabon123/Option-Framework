@@ -3197,14 +3197,48 @@ class TradingEngine:
         if quantity <= 0 or self.position_sizer is None:
             return {'position_size': quantity}
 
-        # Get portfolio metrics for position sizing
-        portfolio_metrics = self.portfolio.get_metrics(include_open_positions=True)
+        # Get portfolio value directly - this ensures we get the current value
+        portfolio_value = self.portfolio.get_portfolio_value()
+        
+        # Get current portfolio metrics
+        portfolio_metrics = self.portfolio.get_performance_metrics()
+        
+        # Ensure the metrics have the critical values properly set
+        # This is the key fix to ensure proper position sizing
+        if portfolio_metrics.get('net_liquidation_value', 0) <= 0:
+            portfolio_metrics['net_liquidation_value'] = portfolio_value
+            
+        # Double-check other required metrics
+        if 'available_margin' not in portfolio_metrics or portfolio_metrics['available_margin'] <= 0:
+            total_margin = portfolio_metrics.get('total_margin', 0)
+            portfolio_metrics['available_margin'] = max(portfolio_value - total_margin, 0)
 
-        # Get any additional metrics needed by position sizer
+        # Pass the portfolio object for access to margin calculator
         portfolio_metrics['portfolio'] = self.portfolio
 
-        # Get current date for portfolio history lookup
-        current_date = daily_data.index[0].date() if len(daily_data) > 0 else None
+        # Get current date for portfolio history lookup - handle different index types
+        current_date = None
+        if len(daily_data) > 0:
+            # The index might be a datetime or could be numeric (like numpy.int64)
+            idx_value = daily_data.index[0]
+            if hasattr(idx_value, 'date'):
+                # This is a datetime-like object
+                current_date = idx_value.date()
+            elif isinstance(idx_value, (int, np.integer, float, np.floating)):
+                # This is a numeric index - could be a timestamp or just a sequence
+                # Convert to date if it looks like a timestamp
+                if isinstance(idx_value, (int, np.integer)) and idx_value > 10000:
+                    try:
+                        # Try to convert assuming it's a timestamp
+                        current_date = pd.Timestamp(idx_value).date()
+                    except:
+                        # Just use the numeric value
+                        current_date = idx_value
+                else:
+                    current_date = idx_value
+            else:
+                # Use the string representation or whatever it is
+                current_date = idx_value
 
         # Calculate portfolio returns for risk scaling
         returns = self.portfolio.get_returns_series()
