@@ -67,6 +67,9 @@ class HedgingManager:
         self.current_hedge_delta = 0
         self.current_dollar_delta = 0
         
+        # Initialize cached prices dictionary
+        self.cached_prices = {}
+        
         # Log initialization in a standardized format
         if self.logger:
             self.logger.info("=" * 40)
@@ -102,6 +105,19 @@ class HedgingManager:
                 self.logger.info(f"  Hedging: Disabled")
                 
             self.logger.info("=" * 40)
+    
+    def set_cached_prices(self, prices: Dict[str, float]) -> None:
+        """
+        Set the cached prices dictionary for consistent price access across all hedging operations.
+        
+        Args:
+            prices: Dictionary of symbol -> price mappings
+        """
+        self.cached_prices = prices
+        if self.logger:
+            if self.hedge_symbol in prices:
+                self.logger.info(f"Set cached price for primary hedge symbol {self.hedge_symbol}: ${prices[self.hedge_symbol]:.2f}")
+            self.logger.info(f"Cached prices set for {len(prices)} symbols")
     
     def calculate_hedge_requirements(self, market_data: pd.DataFrame, current_date: Optional[datetime] = None) -> Dict[str, Any]:
         """
@@ -624,7 +640,16 @@ class HedgingManager:
         Returns:
             float: Underlying price or 0 if not found
         """
-        # Check for hedge with underlying configuration
+        underlying_price = 0
+        
+        # FIRST PRIORITY: Use cached prices if available
+        if hasattr(self, 'cached_prices') and self.cached_prices and self.hedge_symbol in self.cached_prices:
+            underlying_price = self.cached_prices[self.hedge_symbol]
+            if underlying_price > 0:
+                self.logger.info(f"Using underlying price from cached prices: ${underlying_price:.2f}")
+                return underlying_price
+        
+        # SECOND PRIORITY: Check for hedge with underlying configuration
         hedge_with_underlying = self.config.get('hedge_with_underlying', False)
         
         if hedge_with_underlying:
@@ -708,9 +733,57 @@ class HedgingManager:
                 if underlying_symbol == self.hedge_symbol and underlying_price is not None:
                     return underlying_price
         
-        # If all else fails, default to 0
+        # NEW SECTION: Additional sources to check when market_data doesn't contain the price
+        # If the portfolio has access to a data manager, try to use it
+        if hasattr(self, 'portfolio') and self.portfolio:
+            if hasattr(self.portfolio, 'data_manager') and self.portfolio.data_manager:
+                underlying_price = self.portfolio.data_manager.get_latest_price(self.hedge_symbol) or 0
+                if underlying_price > 0:
+                    self.logger.info(f"Using underlying price from data manager: ${underlying_price:.2f}")
+                    return underlying_price
+            
+            # Try to get price from portfolio's market data
+            if hasattr(self.portfolio, 'market_data'):
+                market_data = self.portfolio.market_data
+                if isinstance(market_data, pd.DataFrame) and not market_data.empty:
+                    # Try to extract price from DataFrame
+                    if self.hedge_symbol in market_data.index:
+                        price_col = next((col for col in ['Close', 'close', 'Price', 'price'] 
+                                          if col in market_data.columns), None)
+                        if price_col:
+                            underlying_price = market_data.loc[self.hedge_symbol, price_col]
+                            if underlying_price > 0:
+                                self.logger.info(f"Using underlying price from portfolio market data frame: ${underlying_price:.2f}")
+                                return underlying_price
+        
+        # If we're in a TradingEngine, try to use its price lookup method
+        if hasattr(self, 'trading_engine'):
+            try:
+                if hasattr(self.trading_engine, '_get_underlying_price'):
+                    underlying_price = self.trading_engine._get_underlying_price(self.hedge_symbol) or 0
+                    if underlying_price > 0:
+                        self.logger.info(f"Using underlying price from trading engine: ${underlying_price:.2f}")
+                        return underlying_price
+            except Exception as e:
+                if self.logger:
+                    self.logger.warning(f"Error getting underlying price from trading engine: {str(e)}")
+        
+        # As a fallback, use a realistic default price based on major indices
+        # Default prices for common indices/ETFs
+        default_prices = {
+            'SPY': 475.0,
+            'QQQ': 430.0,
+            'IWM': 200.0,
+            'DIA': 380.0
+        }
+        
+        # Use specific price if available, otherwise use a general default
+        default_price = default_prices.get(self.hedge_symbol, 450.0)
+        
         self.logger.warning(f"Could not find price for {self.hedge_symbol} in market data")
-        return 0
+        self.logger.warning(f"No underlying price available for {self.hedge_symbol}, using default price of ${default_price:.2f}")
+        
+        return default_price
 
     def verify_hedge_calculation(self, total_delta: float, target_delta: float, tolerance_delta: float, underlying_price: float = 100.0) -> Dict[str, Any]:
         """
@@ -908,7 +981,6 @@ class HedgingManager:
         
         return hedge_position
 
-    # Add a new method to create a theoretical hedge position for an option position
     def create_theoretical_hedge_position(self, option_position) -> Optional[Position]:
         """
         Create a theoretical hedge position for a given option position.
@@ -957,16 +1029,87 @@ class HedgingManager:
         else:
             underlying_symbol = self.hedge_symbol
             
-        # Get underlying price
-        if hasattr(option_position, 'underlying_price') and option_position.underlying_price > 0:
-            underlying_price = option_position.underlying_price
-        elif hasattr(option_position, 'instrument_data') and option_position.instrument_data:
-            underlying_price = option_position.instrument_data.get('UnderlyingPrice', 0)
-        else:
-            # In a real scenario, we would fetch the price from market data
-            # For this theoretical calculation, we'll use a placeholder
-            underlying_price = 100  # Placeholder
+        # Get underlying price - FIRST CHECK CACHED PRICES FOR CONSISTENCY
+        underlying_price = 0
+        
+        # First priority: Check cached prices for consistency across all operations
+        if hasattr(self, 'cached_prices') and self.cached_prices and underlying_symbol in self.cached_prices:
+            underlying_price = self.cached_prices[underlying_symbol]
+            if underlying_price > 0:
+                self.logger.info(f"Using underlying price from cached prices: ${underlying_price:.2f}")
+        
+        # Second priority: Check option position attributes if we didn't find a cached price
+        if underlying_price <= 0:
+            if hasattr(option_position, 'underlying_price') and option_position.underlying_price > 0:
+                underlying_price = option_position.underlying_price
+            elif hasattr(option_position, 'instrument_data') and option_position.instrument_data:
+                underlying_price = option_position.instrument_data.get('UnderlyingPrice', 0)
+        
+        # Third priority: Try other data sources if still no price
+        if underlying_price <= 0:
+            if hasattr(self, 'portfolio') and self.portfolio:
+                # If the portfolio has access to a data manager, try to use it
+                if hasattr(self.portfolio, 'data_manager') and self.portfolio.data_manager:
+                    underlying_price = self.portfolio.data_manager.get_latest_price(underlying_symbol) or 0
+                    if underlying_price > 0:
+                        self.logger.info(f"Using underlying price from data manager: ${underlying_price:.2f}")
+                    elif underlying_price <= 0 and self.logger:
+                        self.logger.warning(f"Failed to get underlying price for {underlying_symbol} from portfolio's data manager")
+                
+                # Try to get price from portfolio's market data
+                if underlying_price <= 0 and hasattr(self.portfolio, 'market_data'):
+                    market_data = self.portfolio.market_data
+                    if isinstance(market_data, pd.DataFrame) and not market_data.empty:
+                        # Try to extract price from DataFrame
+                        if underlying_symbol in market_data.index:
+                            price_col = next((col for col in ['Close', 'close', 'Price', 'price'] 
+                                              if col in market_data.columns), None)
+                            if price_col:
+                                underlying_price = market_data.loc[underlying_symbol, price_col]
+                                if underlying_price > 0:
+                                    self.logger.info(f"Using underlying price from market data frame: ${underlying_price:.2f}")
             
+            # If we still don't have a price and we're in a TradingEngine, try to use its price lookup method
+            if underlying_price <= 0 and hasattr(self, 'trading_engine'):
+                try:
+                    if hasattr(self.trading_engine, '_get_underlying_price'):
+                        underlying_price = self.trading_engine._get_underlying_price(underlying_symbol) or 0
+                        if underlying_price > 0:
+                            self.logger.info(f"Using underlying price from trading engine: ${underlying_price:.2f}")
+                except Exception as e:
+                    if self.logger:
+                        self.logger.warning(f"Error getting underlying price from trading engine: {str(e)}")
+        
+        # If we still don't have a price, check if there's a _get_underlying_price method
+        if underlying_price <= 0 and hasattr(self, '_get_underlying_price'):
+            try:
+                # Try to get price from our own method with an empty dict
+                underlying_price = self._get_underlying_price({}) or 0
+                if underlying_price > 0:
+                    self.logger.info(f"Using underlying price from _get_underlying_price: ${underlying_price:.2f}")
+            except Exception as e:
+                if self.logger:
+                    self.logger.warning(f"Error getting underlying price: {str(e)}")
+                underlying_price = 0
+        
+        # As a fallback, use a realistic default price based on major indices
+        if underlying_price <= 0:
+            # Default prices for common indices/ETFs
+            default_prices = {
+                'SPY': 475.0,
+                'QQQ': 430.0,
+                'IWM': 200.0,
+                'DIA': 380.0
+            }
+            
+            # Use specific price if available, otherwise use a general default
+            default_price = default_prices.get(underlying_symbol, 450.0)
+            
+            if self.logger:
+                self.logger.warning(f"No underlying price available for {underlying_symbol}, using default price of ${default_price:.2f}")
+            
+            underlying_price = default_price
+    
         # Log the hedge position details
         if self.logger:
             self.logger.info(f"[HedgingManager] Creating theoretical hedge for {option_position.symbol}")
@@ -988,8 +1131,20 @@ class HedgingManager:
             logger=self.logger
         )
         
-        # Set the delta explicitly
-        hedge_position.current_delta = -hedge_shares if is_short else hedge_shares
+        # CRITICAL FIX: Make sure the underlying_price is set correctly for margin calculation
+        hedge_position.underlying_price = underlying_price
+        
+        # Set the delta explicitly - for a stock position, delta is the number of shares * direction
+        # For margin calculations, we need to express delta as "per $1 move in the underlying"
+        # For stock positions, this is simply the number of shares with direction
+        direction = -1 if is_short else 1
+        hedge_position.current_delta = hedge_shares * direction
+        
+        # Ensure all required attributes for margin calculation are present
+        # Stock positions don't use these for margin, but set to zero to avoid attribute errors
+        hedge_position.current_gamma = 0
+        hedge_position.current_vega = 0
+        hedge_position.current_theta = 0
         
         return hedge_position
     
@@ -1026,6 +1181,15 @@ class HedgingManager:
         Returns:
             dict: Margin calculation results including hedging benefits
         """
+        # Make sure option_position has all required attributes for margin calculation
+        if not hasattr(option_position, 'underlying_price') or option_position.underlying_price <= 0:
+            if hasattr(self, 'cached_prices') and self.cached_prices:
+                underlying_symbol = option_position.underlying if hasattr(option_position, 'underlying') else self.hedge_symbol
+                if underlying_symbol in self.cached_prices:
+                    option_position.underlying_price = self.cached_prices[underlying_symbol]
+                    if self.logger:
+                        self.logger.info(f"Setting option position underlying price from cache: ${option_position.underlying_price:.2f}")
+        
         # Create the hedged position pair
         positions_dict = self.create_hedged_position_pair(option_position)
         

@@ -1,0 +1,40 @@
+################################################################################
+#                     POSITION SIZING CONFIGURATION                           #
+################################################################################
+
+# Position Sizing Configuration
+position_sizing:
+  # Whether to enable dynamic position sizing (true) or use fixed sizes (false)
+  enabled: true
+  
+  # Maximum position size as a percentage of portfolio value
+  # 0.25 = No position can exceed 25% of portfolio value
+  max_position_size_pct: 0.25
+  
+  # Minimum position size (in contracts/shares)
+  # If a position is added, it must be at least this size
+  min_position_size: 1
+  
+  # Whether to automatically hedge positions for margin efficiency
+  hedge_for_margin: true
+  
+  # Whether to apply margin constraints during position sizing
+  apply_margin_constraints: true
+  
+  # Whether to use risk scaling from the risk_scaling config (if enabled)
+  use_risk_scaling: true
+  
+  # Default risk scaling to use if risk_scaling is disabled
+  default_risk_scaling: 1.0
+  
+  # Advanced Margin Settings
+  margin:
+    # Whether to use the portfolio's margin calculator for position sizing
+    use_portfolio_calculator: true
+    
+    # Margin buffer to maintain (as percentage of available margin)
+    margin_buffer_pct: 0.10
+    
+    # Whether to apply portfolio-level margin calculation 
+    # This considers correlations and hedging benefits
+    portfolio_margin: true 

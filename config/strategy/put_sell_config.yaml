@@ -74,13 +74,13 @@ portfolio:
 
 # Logging Configuration
 logging:
-  level: "WARNING"
+  level: "INFO"
   log_to_file: true
   log_file_path: null  # will use default path
   component_levels:
     margin: "INFO"
-    portfolio: "WARNING"
-    trading: "WARNING"
+    portfolio: "INFO"
+    trading: "INFO"
 
 # Hedging Configuration
 hedging:
@@ -99,6 +99,52 @@ margin_management:
   margin_buffer_pct: 0.10  # 10% buffer
   margin_calculator_type: "span"
   margin_calculation_method: "portfolio"
+
+# Position Sizing Configuration
+position_sizing:
+  # Whether to enable dynamic position sizing (true) or use fixed sizes (false)
+  enabled: true
+  
+  # Maximum position size as a percentage of portfolio value
+  max_position_size_pct: 0.25  # No position can exceed 25% of portfolio value
+  
+  # Minimum position size (in contracts)
+  min_position_size: 1
+  
+  # Whether to automatically hedge positions for margin efficiency
+  hedge_for_margin: true
+  
+  # Whether to apply margin constraints during position sizing
+  apply_margin_constraints: true
+  
+  # Whether to use risk scaling from the risk_scaling config (if enabled)
+  use_risk_scaling: true
+
+# Risk Scaling Configuration
+risk_scaling:
+  # Whether to enable risk scaling (true) or use fixed position sizing (false)
+  enabled: true
+  
+  # Risk scaling method to use: "sharpe", "volatility", "adaptive", "combined"
+  method: "sharpe"
+  
+  # Number of days in rolling window for calculations
+  rolling_window: 21
+  
+  # Target Z-score for full position sizing (0 = neutral market assumption)
+  target_z: 0
+  
+  # Minimum Z-score threshold (-2.0 = reduce position size in high volatility)
+  min_z: -2.0
+  
+  # Minimum investment ratio regardless of risk scaling (0.25 = min 25% of normal size)
+  min_investment: 0.25
+  
+  # Sharpe Ratio Method Parameters
+  sharpe:
+    min_sharpe: 0.5      # Minimum Sharpe ratio for scaling
+    target_sharpe: 1.5   # Target Sharpe ratio for full scaling
+    risk_free_rate: 0.02 # Risk-free rate for Sharpe calculations (annual)
 
 # Include other configurations
 includes:

@@ -88,7 +88,7 @@ portfolio:
 # Logging Configuration
 logging:
   # Logging level: DEBUG, INFO, WARNING, ERROR, CRITICAL
-  level: "DEBUG"
+  level: "INFO"
   
   # Whether to log to file
   file: true
@@ -97,11 +97,11 @@ logging:
   components:
     # Margin calculation logging
     margin:
-      level: "verbose"
+      level: "standard"
     
     # Portfolio logging
     portfolio:
-      level: "verbose"
+      level: "standard"
 
 # Include other configurations
 includes:

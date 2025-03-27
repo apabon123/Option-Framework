@@ -126,11 +126,11 @@ logging:
   components:
     # Signal generation logging
     signals:
-      level: "verbose"
+      level: "standard"
     
     # Portfolio logging
     portfolio:
-      level: "verbose"
+      level: "standard"
 
 # Output Configuration
 output:

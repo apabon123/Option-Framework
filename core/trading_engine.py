@@ -32,6 +32,8 @@ if __name__ == "__main__":
     from core.reporting import ReportingSystem
     from core.risk_manager import RiskManager
     from core.margin_management import PortfolioRebalancer
+    from core.position_sizer import PositionSizer
+    from core.risk_scaler import RiskScaler
 else:
     # When imported as a module, use relative imports
     from .data_manager import DataManager
@@ -42,6 +44,8 @@ else:
     from .reporting import ReportingSystem
     from .risk_manager import RiskManager
     from .margin_management import PortfolioRebalancer
+    from .position_sizer import PositionSizer
+    from .risk_scaler import RiskScaler
 
 
 class LoggingManager:
@@ -692,7 +696,7 @@ class TradingEngine:
         # Check if hedging is enabled in the configuration
         hedging_enabled = self.config.get('hedging', {}).get('enabled', False)
 
-        # Initialize the hedging manager if hedging is enabled - do this before risk manager
+        # Initialize the hedging manager if hedging is enabled - do this before position sizer
         if hedging_enabled:
             self.logger.info("INITIALIZING HEDGING MANAGER (ENABLED)")
             hedging_config = self.config.get('hedging', {})
@@ -711,18 +715,44 @@ class TradingEngine:
             self.hedging_manager = None
             self.logger.info("HEDGING: DISABLED")
 
-        # Create risk manager AFTER hedging manager
-        self.logger.info("INITIALIZING RISK MANAGER")
-        self.risk_manager = RiskManager(
-            config=self.config,
-            logger=self.logger
-        )
+        # Initialize the risk scaler if risk scaling is enabled
+        risk_scaling_config = self.config.get('risk_scaling', {})
+        if risk_scaling_config.get('enabled', True):  # Default to enabled for backward compatibility
+            self.logger.info("INITIALIZING RISK SCALER")
+            self.risk_scaler = RiskScaler(
+                config=self.config,
+                logger=self.logger
+            )
+        else:
+            self.risk_scaler = None
+            self.logger.info("RISK SCALING: DISABLED")
 
-        # Connect hedging manager to risk manager if both exist
-        if self.hedging_manager and hasattr(self.risk_manager, 'hedging_manager'):
-            self.risk_manager.hedging_manager = self.hedging_manager
-            self.logger.info(
-                "[TradingEngine] Connected hedging manager to risk manager for integrated margin calculation")
+        # Create position sizer (formerly risk manager)
+        position_sizing_config = self.config.get('position_sizing', {})
+        if position_sizing_config.get('enabled', True):  # Default to enabled for backward compatibility
+            self.logger.info("INITIALIZING POSITION SIZER")
+            self.position_sizer = PositionSizer(
+                config=self.config,
+                logger=self.logger
+            )
+
+            # Connect hedging manager to position sizer if both exist
+            if self.hedging_manager and hasattr(self.position_sizer, 'hedging_manager'):
+                self.position_sizer.hedging_manager = self.hedging_manager
+                self.logger.info(
+                    "[TradingEngine] Connected hedging manager to position sizer for integrated margin calculation")
+
+            # Connect risk scaler to position sizer if both exist
+            if self.risk_scaler and hasattr(self.position_sizer, 'risk_scaler'):
+                self.position_sizer.risk_scaler = self.risk_scaler
+                self.logger.info(
+                    "[TradingEngine] Connected risk scaler to position sizer for risk-adjusted position sizing")
+        else:
+            self.position_sizer = None
+            self.logger.info("POSITION SIZING: DISABLED - Using fixed position sizes")
+
+        # For backward compatibility, alias position_sizer as risk_manager
+        self.risk_manager = self.position_sizer
 
         # Create data manager
         self.logger.info("INITIALIZING DATA MANAGER")
@@ -3147,95 +3177,59 @@ class TradingEngine:
     def _position_sizing(self, symbol: str, quantity: int, price: float, is_short: bool,
                          instrument_data: Dict[str, Any], daily_data: pd.DataFrame) -> Dict[str, Any]:
         """
-        Calculate appropriate position size based on risk parameters.
+        Apply position sizing rules to determine the appropriate position size.
+
+        This method uses the position sizer to calculate the optimal position size,
+        taking into account margin requirements, portfolio constraints, and risk scaling.
 
         Args:
-            symbol: Symbol of the instrument
-            quantity: Requested quantity
+            symbol: Instrument symbol
+            quantity: Original requested quantity
             price: Current price
             is_short: Whether this is a short position
             instrument_data: Instrument data dictionary
             daily_data: Daily market data
 
         Returns:
-            Dict containing position sizing information including 'position_size'
+            dict: Dictionary with position sizing information
         """
-        if not hasattr(self, 'risk_manager') or not self.risk_manager:
-            # If no risk manager, return the original quantity
-            self.logger.debug(
-                f"No risk manager available, using original position size: {quantity}")
+        # Skip position sizing if disabled or for zero quantity
+        if quantity <= 0 or self.position_sizer is None:
             return {'position_size': quantity}
 
-        # Get portfolio value directly - this ensures we get the current value
-        portfolio_value = self.portfolio.get_portfolio_value()
+        # Get portfolio metrics for position sizing
+        portfolio_metrics = self.portfolio.get_metrics(include_open_positions=True)
 
-        # Get current portfolio metrics
-        portfolio_metrics = self.portfolio.get_performance_metrics()
-
-        # Ensure the metrics have the critical values properly set
-        # This is the key fix to ensure proper position sizing
-        if portfolio_metrics.get('net_liquidation_value', 0) <= 0:
-            portfolio_metrics['net_liquidation_value'] = portfolio_value
-
-        # Double-check other required metrics
-        if 'available_margin' not in portfolio_metrics or portfolio_metrics['available_margin'] <= 0:
-            total_margin = portfolio_metrics.get('total_margin', 0)
-            portfolio_metrics['available_margin'] = max(
-                portfolio_value - total_margin, 0)
-
-        # Pass the portfolio object for access to margin calculator
+        # Get any additional metrics needed by position sizer
         portfolio_metrics['portfolio'] = self.portfolio
+
+        # Get current date for portfolio history lookup
+        current_date = daily_data.index[0].date() if len(daily_data) > 0 else None
+
+        # Calculate portfolio returns for risk scaling
+        returns = self.portfolio.get_returns_series()
         
-        # Check if we already have calculated margin and use it to avoid redundant calculation
-        if 'margin_per_contract' in instrument_data and instrument_data['margin_per_contract'] > 0:
-            self.logger.debug(f"Using pre-calculated margin from instrument_data: ${instrument_data['margin_per_contract']:.2f}")
-            # Store this information in the risk manager for later reference
-            if hasattr(self.risk_manager, '_set_last_margin_per_contract'):
-                self.risk_manager._set_last_margin_per_contract(instrument_data['margin_per_contract'])
-            elif hasattr(self.risk_manager, '__dict__'):
-                self.risk_manager._last_margin_per_contract = instrument_data['margin_per_contract']
-
-        # Log portfolio metrics being used for position sizing
-        self.logger.debug(f"Portfolio metrics for position sizing:")
-        self.logger.debug(f"  Portfolio Value: ${portfolio_value:.2f}")
-        self.logger.debug(
-            f"  NLV: ${portfolio_metrics['net_liquidation_value']:.2f}")
-        self.logger.debug(
-            f"  Available Margin: ${portfolio_metrics['available_margin']:.2f}")
-        self.logger.debug(
-            f"  Total Margin: ${portfolio_metrics.get('total_margin', 0):.2f}")
-
-        # Verify portfolio has the correct margin calculator type
-        # Check if risk manager creates a SPAN calculator during position sizing
-        created_span_calculator = False
-
-        # Use risk manager to calculate position size
-        if hasattr(self.risk_manager, 'calculate_position_size'):
-            # Track the current margin calculator type in portfolio
-            original_margin_calculator = self.portfolio.margin_calculator
-            original_calculator_type = type(
-                original_margin_calculator).__name__ if original_margin_calculator else "None"
-
-            # Calculate position size using the risk manager
-            position_size = self.risk_manager.calculate_position_size(
-                instrument_data,
-                portfolio_metrics,
-                risk_scaling=getattr(self, 'current_risk_scaling', 1.0)
-            )
-
-            # Check if a new SPAN calculator was created during position sizing
-            # If the risk manager's _last_margin_calculator is a SPANMarginCalculator, use it
-            if hasattr(self.risk_manager, '_last_margin_calculator') and self.risk_manager._last_margin_calculator:
-                new_calculator = self.risk_manager._last_margin_calculator
-                new_calculator_type = type(new_calculator).__name__
-
-                # If a SPAN calculator was created, check if it's different from what portfolio has
-                if new_calculator_type == "SPANMarginCalculator" and original_calculator_type != "SPANMarginCalculator":
-                    # Update the portfolio's margin calculator to use the SPAN calculator
-                    self.logger.info(
-                        f"[Position Sizing] Updating portfolio margin calculator: {original_calculator_type} -> {new_calculator_type}")
-                    self.portfolio.set_margin_calculator(new_calculator)
-                    created_span_calculator = True
+        # Apply risk scaling if enabled
+        risk_scaling = 1.0  # Default neutral scaling
+        if self.risk_scaler and self.risk_scaler.enabled:
+            risk_scaling = self.risk_scaler.calculate_risk_scaling(returns)
+        
+        # Use position sizer to calculate final position size
+        if hasattr(self.position_sizer, 'calculate_position_size'):
+            try:
+                position_size = self.position_sizer.calculate_position_size(
+                    instrument_data, portfolio_metrics, risk_scaling
+                )
+            except Exception as e:
+                self.logger.error(f"Error in position sizing calculation: {str(e)}")
+                self.logger.debug(f"Position sizing error details:", exc_info=True)
+                position_size = quantity  # Fall back to original quantity
+            
+            # Make sure we have a valid integer
+            if not isinstance(position_size, (int, float)) or pd.isna(position_size):
+                position_size = quantity
+            else:
+                position_size = int(position_size)  # Ensure integer
 
             self.logger.debug(
                 f"Position sizing for {symbol}: Original={quantity}, Calculated={position_size}")
@@ -3243,9 +3237,9 @@ class TradingEngine:
             # Return the calculated position size
             return {'position_size': position_size}
         else:
-            # If risk manager doesn't have the method, return original quantity
+            # If position sizer doesn't have the method, return original quantity
             self.logger.debug(
-                f"Risk manager doesn't have calculate_position_size method, using original: {quantity}")
+                f"Position sizer doesn't have calculate_position_size method, using original: {quantity}")
             return {'position_size': quantity}
 
     def _check_position_margin_impact(self, symbol: str, contracts: int, price: float, current_market_data: Dict):

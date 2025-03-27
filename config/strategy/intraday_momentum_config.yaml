@@ -148,7 +148,7 @@ transaction_costs:
 # Logging Configuration
 logging:
   # Logging level: DEBUG, INFO, WARNING, ERROR, CRITICAL
-  level: "DEBUG"
+  level: "INFO"
   
   # Whether to log to file
   file: true
@@ -157,23 +157,23 @@ logging:
   components:
     # Margin calculation logging
     margin:
-      level: "verbose"
+      level: "standard"
     
     # Portfolio logging
     portfolio:
-      level: "verbose"
+      level: "standard"
     
     # Strategy logging
     strategy:
-      level: "DEBUG"
+      level: "INFO"
     
     # Data manager logging
     data_manager:
-      level: "DEBUG"
+      level: "INFO"
     
     # Risk manager logging
     risk_manager:
-      level: "DEBUG"
+      level: "INFO"
 
 # Output Configuration
 output:

@@ -1,0 +1,67 @@
+################################################################################
+#                     RISK SCALING CONFIGURATION                              #
+################################################################################
+
+# Risk Scaling Configuration
+risk_scaling:
+  # Whether to enable risk scaling (true) or use fixed position sizing (false)
+  enabled: true
+  
+  # Risk scaling method to use
+  # Options: "sharpe", "volatility", "adaptive", "combined"
+  method: "sharpe"
+  
+  # Number of days in rolling window for calculations
+  rolling_window: 21
+  
+  # Target Z-score for full position sizing (0 = neutral market assumption)
+  target_z: 0
+  
+  # Minimum Z-score threshold (-2.0 = reduce position size in high volatility)
+  min_z: -2.0
+  
+  # Minimum investment ratio regardless of risk scaling
+  # 0.25 = Always deploy at least 25% of normal position size
+  min_investment: 0.25
+  
+  # Sharpe Ratio Method Parameters
+  sharpe:
+    # Minimum Sharpe ratio for scaling
+    min_sharpe: 0.5
+    
+    # Target Sharpe ratio for full scaling
+    target_sharpe: 1.5
+    
+    # Risk-free rate for Sharpe calculations (annual)
+    risk_free_rate: 0.02
+  
+  # Volatility Targeting Method Parameters
+  volatility:
+    # Target annualized volatility (15%)
+    target_volatility: 0.15
+    
+    # Minimum variance ratio allowed
+    min_variance_ratio: 0.5
+    
+    # Maximum variance ratio allowed
+    max_variance_ratio: 2.0
+  
+  # Adaptive Method Parameters
+  adaptive:
+    # Maximum heat level (0.0-1.0)
+    max_heat: 1.0
+    
+    # Rate at which heat decreases after gains
+    cooldown_rate: 0.05
+    
+    # Rate at which heat increases after losses
+    heatup_rate: 0.02
+    
+    # Recovery factor
+    recovery_factor: 2.0
+  
+  # Combined Method Parameters
+  combined:
+    # Weights for each method [volatility, sharpe, adaptive]
+    # Must sum to 1.0
+    weights: [0.33, 0.33, 0.34] 
