@@ -307,7 +307,11 @@ class MarginCalculator:
                 # Track position delta for debugging
                 position_delta = 0
                 
-                if isinstance(position, OptionPosition):
+                # First check if position has pre-calculated delta_dollars attribute (from theoretical hedge)
+                if hasattr(position, 'delta_dollars') and position.delta_dollars != 0:
+                    position_delta = position.delta_dollars
+                    self.log_verbose(f"Position {position.symbol}: Using pre-calculated delta_dollars=${position_delta:.2f}")
+                elif isinstance(position, OptionPosition):
                     # For options, delta is per share, we need to multiply by 100 for the contract
                     # This is the absolute value in dollars of the option delta
                     current_delta = position.current_delta if hasattr(position, 'current_delta') else 0
@@ -334,6 +338,10 @@ class MarginCalculator:
                     else:
                         self.log_verbose(f"Stock position {position.symbol}: Incomplete data for delta calculation")
                         continue
+                
+                # Save calculated delta_dollars back to position for consistency
+                if not hasattr(position, 'delta_dollars'):
+                    position.delta_dollars = position_delta
                 
                 net_delta += position_delta
                 total_delta_exposure += abs(position_delta)
@@ -989,7 +997,11 @@ class SPANMarginCalculator(MarginCalculator):
                 # Track position delta for debugging
                 position_delta = 0
                 
-                if isinstance(position, OptionPosition):
+                # First check if position has pre-calculated delta_dollars attribute (from theoretical hedge)
+                if hasattr(position, 'delta_dollars') and position.delta_dollars != 0:
+                    position_delta = position.delta_dollars
+                    self.log_verbose(f"Position {position.symbol}: Using pre-calculated delta_dollars=${position_delta:.2f}")
+                elif isinstance(position, OptionPosition):
                     # For options, delta is per share, we need to multiply by 100 for the contract
                     # This is the absolute value in dollars of the option delta
                     current_delta = position.current_delta if hasattr(position, 'current_delta') else 0
@@ -1016,6 +1028,10 @@ class SPANMarginCalculator(MarginCalculator):
                     else:
                         self.log_verbose(f"Stock position {position.symbol}: Incomplete data for delta calculation")
                         continue
+                
+                # Save calculated delta_dollars back to position for consistency
+                if not hasattr(position, 'delta_dollars'):
+                    position.delta_dollars = position_delta
                 
                 net_delta += position_delta
                 total_delta_exposure += abs(position_delta)

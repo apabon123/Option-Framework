@@ -1005,22 +1005,50 @@ class HedgingManager:
         # Get number of contracts
         contracts = option_position.contracts if hasattr(option_position, 'contracts') else 1
         
-        # Calculate total position delta
-        position_delta = option_delta * contracts
+        # Determine if this is a put or call
+        is_put = False
+        if hasattr(option_position, 'option_type'):
+            is_put = option_position.option_type.upper() in ['P', 'PUT']
+        elif hasattr(option_position, 'symbol') and 'P' in option_position.symbol:
+            is_put = True
+            
+        # Determine if position is short
+        is_option_short = False
+        if hasattr(option_position, 'is_short'):
+            is_option_short = option_position.is_short
+            
+        # Calculate total position delta - this represents the dollar risk per $1 move in the underlying
+        # For options, we need to convert from "per share" delta to "per contract" delta
+        # For consistency with how the margin calculator handles deltas, we'll express this as dollar delta
+        position_delta = option_delta * contracts * 100  # 100 shares per contract
         
-        # Calculate hedge delta (opposite of option delta)
+        # IMPROVED HEDGE DIRECTION LOGIC:
+        # For a short put: Use a short hedge position (negative delta)
+        # For a long put: Use a long hedge position (positive delta)
+        # For a short call: Use a long hedge position (positive delta)
+        # For a long call: Use a short hedge position (negative delta)
+        
+        # For proper delta hedging, a short put should be hedged with a short stock position
+        # even though the hedge delta calculation might suggest otherwise
+        
+        # The adjusted hedge direction based on option type and position
+        if is_put:
+            # For puts: short put = short hedge, long put = long hedge
+            is_short = is_option_short
+        else:
+            # For calls: short call = long hedge, long call = short hedge
+            is_short = not is_option_short
+            
+        # Calculate hedge delta (opposite of position delta)
         hedge_delta = -position_delta
         
         # Convert to hedge shares
-        hedge_shares = int(round(abs(hedge_delta) * 100))  # 100 shares per contract
+        hedge_shares = int(round(abs(hedge_delta / 100)))  # Each share has delta of 1.0 or -1.0
         
         # Skip if hedge size is too small
         if hedge_shares < 1:
             return None
             
-        # Determine hedge direction
-        is_short = hedge_delta < 0  # Short if delta is negative
-        
         # Get underlying symbol and price
         if hasattr(option_position, 'underlying') and option_position.underlying:
             underlying_symbol = option_position.underlying
@@ -1113,8 +1141,8 @@ class HedgingManager:
         # Log the hedge position details
         if self.logger:
             self.logger.info(f"[HedgingManager] Creating theoretical hedge for {option_position.symbol}")
-            self.logger.info(f"  Option delta: {option_delta:.4f} × {contracts} contracts = {position_delta:.4f}")
-            self.logger.info(f"  Hedge delta needed: {hedge_delta:.4f}")
+            self.logger.info(f"  Option delta: {option_delta:.4f} × {contracts} contracts = {position_delta/100:.4f}")
+            self.logger.info(f"  Hedge delta needed: {abs(hedge_delta/100):.4f}")
             self.logger.info(f"  Hedge shares: {hedge_shares} of {underlying_symbol} at ${underlying_price:.2f}")
             self.logger.info(f"  Direction: {'Short' if is_short else 'Long'}")
             
@@ -1134,11 +1162,18 @@ class HedgingManager:
         # CRITICAL FIX: Make sure the underlying_price is set correctly for margin calculation
         hedge_position.underlying_price = underlying_price
         
-        # Set the delta explicitly - for a stock position, delta is the number of shares * direction
-        # For margin calculations, we need to express delta as "per $1 move in the underlying"
-        # For stock positions, this is simply the number of shares with direction
+        # Set the delta explicitly in dollar terms for consistency with margin calculator
+        # For stock positions, the dollar delta is simply shares * price * direction
         direction = -1 if is_short else 1
-        hedge_position.current_delta = hedge_shares * direction
+        stock_delta_dollars = hedge_shares * direction * underlying_price
+        
+        # This is the critical part - for consistency with how the actual positions are handled in margin calculation
+        # We need to express the delta in dollar terms to match how the margin calculator calculates net_delta
+        hedge_position.current_delta = hedge_shares * direction  # Raw delta (shares count with direction)
+        hedge_position.delta_dollars = stock_delta_dollars  # Dollar delta for margin calculations
+        
+        # Also set the option delta in dollar terms on the option position to ensure consistent calculations
+        option_position.delta_dollars = position_delta * underlying_price / 100 if not hasattr(option_position, 'delta_dollars') else option_position.delta_dollars
         
         # Ensure all required attributes for margin calculation are present
         # Stock positions don't use these for margin, but set to zero to avoid attribute errors
