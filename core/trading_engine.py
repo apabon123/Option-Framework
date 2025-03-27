@@ -570,6 +570,9 @@ class TradingEngine:
 
         # Store original date format from config for consistency
         self.date_format = self.config.get('date_format', '%Y-%m-%d')
+        
+        # Cache for underlying prices
+        self.cached_underlying_prices = {}
 
         # Initialize components (portfolio, risk manager, etc.)
         self._init_components()
@@ -2511,9 +2514,27 @@ class TradingEngine:
         """
         self.logger.info("[TradeManager] Executing trading signals")
 
+        # Prepare hedge market data - extract and cache underlying prices
+        # This ensures consistency across all subsequent hedging operations
+        self._prepare_hedge_market_data(daily_data)
+
         # Convert daily data to market data by symbol for margin impact checks
         market_data_by_symbol = self.data_manager.get_market_data_by_symbol(
             daily_data)
+            
+        # Inject cached underlying prices into market data for consistency
+        for symbol, price in self.cached_underlying_prices.items():
+            if symbol in market_data_by_symbol:
+                market_data_by_symbol[symbol]['UnderlyingPrice'] = price
+            else:
+                # Create a minimal entry if the symbol doesn't exist
+                market_data_by_symbol[symbol] = {
+                    'Symbol': symbol,
+                    'UnderlyingSymbol': symbol,
+                    'UnderlyingPrice': price,
+                    'Close': price,
+                    'MidPrice': price
+                }
 
         # Process each signal
         executed_signals = []
@@ -2641,8 +2662,12 @@ class TradingEngine:
                             self.logger.info(f"[Portfolio] Using SPAN margin calculation")
                             self.logger.info(f"[Position Sizing] Using hedging manager for margin calculation with full hedging benefits")
                             
-                            # Calculate margin for the combined position (option + hedge)
+                            # Instead of creating a new option position and hedge position here,
+                            # use the hedging manager to create a properly initialized theoretical hedge position
+                            # This ensures all necessary attributes are set correctly
                             from core.position import OptionPosition
+                            
+                            # Create a temporary option position first
                             temp_option_position = OptionPosition(
                                 symbol=symbol,
                                 contracts=1,  # Calculate per contract
@@ -2652,29 +2677,88 @@ class TradingEngine:
                                 logger=self.logger
                             )
                             
-                            # Start SPAN margin calculation
-                            self.logger.info(f"[Margin] Portfolio calculation for 2 positions")
-                            self.logger.info(f"[Margin] Starting SPAN margin calculation for {symbol}")
+                            # Ensure the option position has required attributes for margin calculation
+                            # Add these attributes to properly calculate delta risk
+                            if 'UnderlyingPrice' in instrument_data and instrument_data['UnderlyingPrice'] > 0:
+                                temp_option_position.underlying_price = instrument_data['UnderlyingPrice']
+                            elif 'underlying_price' in instrument_data and instrument_data['underlying_price'] > 0:
+                                temp_option_position.underlying_price = instrument_data['underlying_price']
+                            else:
+                                # Extract underlying symbol for looking up price if needed
+                                underlying_symbol = None
+                                if 'UnderlyingSymbol' in instrument_data:
+                                    underlying_symbol = instrument_data['UnderlyingSymbol']
+                                elif symbol.startswith(('SPY', 'QQQ', 'IWM', 'DIA')):
+                                    underlying_symbol = symbol[:3]
+                                
+                                # Try to get price from market data
+                                if underlying_symbol and underlying_symbol in market_data_by_symbol:
+                                    temp_option_position.underlying_price = market_data_by_symbol[underlying_symbol].get('Price', 0)
+                                    self.logger.info(f"Using market data underlying price for {underlying_symbol}: ${temp_option_position.underlying_price:.2f}")
                             
-                            # Prepare for margin calculation
-                            positions = {
-                                symbol: temp_option_position,
-                                hedge_position.symbol: hedge_position
-                            }
+                            # Set Greeks for proper risk calculation
+                            if 'Delta' in instrument_data:
+                                temp_option_position.current_delta = instrument_data['Delta']
+                            elif 'delta' in instrument_data:
+                                temp_option_position.current_delta = instrument_data['delta']
+                                
+                            if 'Gamma' in instrument_data:
+                                temp_option_position.current_gamma = instrument_data['Gamma']
+                            elif 'gamma' in instrument_data:
+                                temp_option_position.current_gamma = instrument_data['gamma']
+                                
+                            if 'Vega' in instrument_data:
+                                temp_option_position.current_vega = instrument_data['Vega']
+                            elif 'vega' in instrument_data:
+                                temp_option_position.current_vega = instrument_data['vega']
+                                
+                            if 'Theta' in instrument_data:
+                                temp_option_position.current_theta = instrument_data['Theta']
+                            elif 'theta' in instrument_data:
+                                temp_option_position.current_theta = instrument_data['theta']
                             
-                            # Calculate margin using portfolio's calculator
-                            margin_result = self.portfolio.margin_calculator.calculate_portfolio_margin(positions)
-                            margin_with_hedge = margin_result.get('total_margin', 0)
-                            hedge_benefit = margin_result.get('hedge_benefit', 0)
-                            
-                            # Add margin details to instrument data for position sizing
-                            instrument_data['margin_per_contract'] = margin_with_hedge
-                            instrument_data['hedge_benefit'] = hedge_benefit
-                            
-                            self.logger.info(f"[Position Sizing] Hedged margin calculation:")
-                            self.logger.info(f"  Total margin for 1 contract: ${margin_with_hedge:.2f}")
-                            self.logger.info(f"  Hedging benefits: ${hedge_benefit:.2f}")
-                            self.logger.info(f"  Margin per contract (with hedging): ${margin_with_hedge:.2f}")
+                            if hasattr(self, 'hedging_manager') and self.hedging_manager:
+                                # Use the hedging manager to create a properly initialized theoretical hedge position
+                                temp_hedge_position = self.hedging_manager.create_theoretical_hedge_position(temp_option_position)
+                                
+                                if temp_hedge_position:
+                                    # Start SPAN margin calculation with the properly initialized positions
+                                    self.logger.info(f"[Margin] Portfolio calculation for 2 positions")
+                                    self.logger.info(f"[Margin] Starting SPAN margin calculation for {symbol}")
+                                    
+                                    # Prepare for margin calculation
+                                    positions = {
+                                        symbol: temp_option_position,
+                                        temp_hedge_position.symbol: temp_hedge_position
+                                    }
+                                    
+                                    # Calculate margin using portfolio's calculator
+                                    margin_result = self.portfolio.margin_calculator.calculate_portfolio_margin(positions)
+                                    margin_with_hedge = margin_result.get('total_margin', 0)
+                                    hedge_benefit = margin_result.get('hedging_benefits', 0)
+                                    
+                                    # Add margin details to instrument data for position sizing
+                                    instrument_data['margin_per_contract'] = margin_with_hedge
+                                    instrument_data['hedge_benefit'] = hedge_benefit
+                                    
+                                    self.logger.info(f"[Position Sizing] Hedged margin calculation:")
+                                    self.logger.info(f"  Total margin for 1 contract: ${margin_with_hedge:.2f}")
+                                    self.logger.info(f"  Hedging benefits: ${hedge_benefit:.2f}")
+                                    self.logger.info(f"  Margin per contract (with hedging): ${margin_with_hedge:.2f}")
+                                else:
+                                    self.logger.warning(f"[Position Sizing] Could not create theoretical hedge position, falling back to simplified margin")
+                                    # If we can't create a theoretical hedge, fall back to basic calculation
+                                    margin_with_hedge = price * 100 * self.portfolio.margin_calculator.max_leverage
+                                    instrument_data['margin_per_contract'] = margin_with_hedge
+                                    instrument_data['hedge_benefit'] = 0
+                            else:
+                                # No hedging manager available, do a basic calculation without hedging
+                                self.logger.warning(f"[Position Sizing] No hedging manager available, calculating margin without hedge")
+                                positions = {symbol: temp_option_position}
+                                margin_result = self.portfolio.margin_calculator.calculate_portfolio_margin(positions)
+                                margin_with_hedge = margin_result.get('total_margin', 0)
+                                instrument_data['margin_per_contract'] = margin_with_hedge
+                                instrument_data['hedge_benefit'] = 0
 
                     # Perform position sizing with hedging consideration
                     sizing_result = self._position_sizing(
@@ -3439,6 +3523,96 @@ class TradingEngine:
         self.logger.info(f"  NumPy version: {np.__version__}")
 
         self.logger.info("-" * 80)
+
+    def _prepare_hedge_market_data(self, daily_data: pd.DataFrame) -> Dict[str, float]:
+        """
+        Extract and cache underlying prices from market data to ensure consistency across all hedging processes.
+        This method should be called before any hedging calculations to ensure the same prices are used everywhere.
+
+        Args:
+            daily_data: DataFrame of market data for the current day
+
+        Returns:
+            Dict[str, float]: Dictionary of underlying symbols and their prices
+        """
+        self.logger.info("PHASE 3.5: PREPARING HEDGE MARKET DATA")
+        self.logger.info("-" * 50)
+        
+        # Clear previous cache
+        self.cached_underlying_prices = {}
+        
+        # Identify all relevant underlying symbols
+        underlying_symbols = set()
+        
+        # Add the primary hedge symbol if we have a hedging manager
+        if hasattr(self, 'hedging_manager') and self.hedging_manager:
+            primary_symbol = self.hedging_manager.hedge_symbol
+            underlying_symbols.add(primary_symbol)
+            self.logger.info(f"Primary hedge symbol: {primary_symbol}")
+            
+        # Also add symbols from existing positions
+        if self.portfolio and hasattr(self.portfolio, 'positions'):
+            for symbol, position in self.portfolio.positions.items():
+                if hasattr(position, 'instrument_data') and position.instrument_data:
+                    if hasattr(position.instrument_data, 'get'):
+                        underlying = position.instrument_data.get('UnderlyingSymbol')
+                        if underlying:
+                            underlying_symbols.add(underlying)
+        
+        # Extract prices for all identified symbols
+        for underlying_symbol in underlying_symbols:
+            # First check if we have a direct underlying price in the data
+            if hasattr(daily_data, 'iterrows'):
+                for _, row in daily_data.iterrows():
+                    # Try to find the underlying symbol in various columns
+                    symbol_match = False
+                    for col in ['Symbol', 'UnderlyingSymbol']:
+                        if col in row and row[col] == underlying_symbol:
+                            symbol_match = True
+                            break
+
+                    if symbol_match:
+                        # Try to get price from different columns
+                        for price_col in ['UnderlyingPrice', 'Last', 'Close', 'MidPrice']:
+                            if price_col in row and row[price_col] > 0:
+                                self.cached_underlying_prices[underlying_symbol] = row[price_col]
+                                self.logger.info(f"Found underlying price for {underlying_symbol}: ${self.cached_underlying_prices[underlying_symbol]:.2f}")
+                                break
+
+                        if underlying_symbol in self.cached_underlying_prices:
+                            break
+            
+            # If we still don't have a price, try other methods
+            if underlying_symbol not in self.cached_underlying_prices and hasattr(daily_data, 'get'):
+                if 'closing_price' in daily_data and underlying_symbol in daily_data.get('closing_price', {}):
+                    self.cached_underlying_prices[underlying_symbol] = daily_data['closing_price'][underlying_symbol]
+                    self.logger.info(f"Using closing price for {underlying_symbol}: ${self.cached_underlying_prices[underlying_symbol]:.2f}")
+            
+            # Check if we found a price through any method
+            if underlying_symbol not in self.cached_underlying_prices:
+                self.logger.warning(f"Could not find price for {underlying_symbol} in market data")
+                
+                # Use a realistic default based on the symbol
+                default_prices = {
+                    'SPY': 475.0,
+                    'QQQ': 430.0,
+                    'IWM': 200.0,
+                    'DIA': 380.0
+                }
+                default_price = default_prices.get(underlying_symbol, 450.0)
+                self.cached_underlying_prices[underlying_symbol] = default_price
+                self.logger.warning(f"Using default price for {underlying_symbol}: ${default_price:.2f}")
+        
+        # Share cached prices with the hedging manager
+        if hasattr(self, 'hedging_manager') and self.hedging_manager:
+            if hasattr(self.hedging_manager, 'set_cached_prices'):
+                self.hedging_manager.set_cached_prices(self.cached_underlying_prices)
+            else:
+                # If the method doesn't exist (legacy code), add it as an attribute
+                self.hedging_manager.cached_prices = self.cached_underlying_prices
+        
+        self.logger.info(f"Prepared market data for {len(self.cached_underlying_prices)} underlying symbols")
+        return self.cached_underlying_prices
 
 
 if __name__ == "__main__":

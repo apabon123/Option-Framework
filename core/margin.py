@@ -438,7 +438,7 @@ class MarginCalculator:
         margin_utilization = (total_margin / total_value) * 100 if total_value > 0 else 0
         
         # Format the summary table with plain ASCII characters
-        self.log_minimal("\n+------------------- MARGIN SUMMARY -------------------+")
+        self.log_minimal("\n+-------------------------------------------------------+")
         self.log_minimal(f"| Positions: {total_positions:<4}                                |")
         self.log_minimal(f"| Position Value: ${total_value:<11,.2f}                   |")
         self.log_minimal(f"| Total Margin Required: ${total_margin:<11,.2f}            |")
