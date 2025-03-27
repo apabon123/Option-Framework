@@ -442,7 +442,7 @@ class MarginCalculator:
         self.log_minimal(f"| Positions: {total_positions:<4}                                |")
         self.log_minimal(f"| Position Value: ${total_value:<11,.2f}                   |")
         self.log_minimal(f"| Total Margin Required: ${total_margin:<11,.2f}            |")
-        self.log_minimal(f"| Hedging Benefits: ${hedging_benefits:<11,.2f}               |")
+        self.log_minimal(f"| Hedging Benefits: ${hedging_benefits:<11,.2f}            |")
         self.log_minimal(f"| Margin Utilization: {margin_utilization:<6.2f}%                   |")
         if hedging_benefits > 0:
             reduction_pct = (hedging_benefits/max(1, total_margin+hedging_benefits)*100)

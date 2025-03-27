@@ -129,6 +129,23 @@ class RiskManager:
         # Initialize margin_per_contract
         margin_per_contract = option_price * 100
         
+        # Check if we have a pre-calculated margin value to use
+        if 'margin_per_contract' in option_data and option_data['margin_per_contract'] > 0:
+            margin_per_contract = option_data['margin_per_contract']
+            hedging_benefits = option_data.get('hedge_benefit', 0)
+            
+            # Log that we're using pre-calculated values
+            self.logger.info(f"[Position Sizing] Using pre-calculated margin value: ${margin_per_contract:.2f}")
+            if hedging_benefits > 0:
+                self.logger.info(f"[Position Sizing] Using pre-calculated hedge benefit: ${hedging_benefits:.2f}")
+                
+            # Store for reference by other components
+            self._last_margin_per_contract = margin_per_contract
+            return self._calculate_position_size_from_margin(
+                margin_per_contract, net_liq, available_margin, remaining_margin_capacity, 
+                option_symbol, option_price, risk_scaling, option_data
+            )
+        
         # HEDGED MARGIN CALCULATION
         # Use the hedging manager to calculate margin if available
         if self.hedging_manager and hasattr(self.hedging_manager, 'calculate_theoretical_margin'):
@@ -373,8 +390,18 @@ class RiskManager:
             self.logger.warning("=============================================")
         else:
             # Fall back to the simple calculation
-            margin_per_contract = option_price * 100 * self.max_leverage
-            self.logger.info(f"[Position Sizing] Using simple margin calculation: ${margin_per_contract:.2f} per contract")
+            # Check if we have a pre-calculated margin from trading_engine
+            if 'margin_per_contract' in option_data and option_data['margin_per_contract'] > 0:
+                margin_per_contract = option_data['margin_per_contract']
+                self.logger.info(f"[Position Sizing] Using pre-calculated SPAN margin: ${margin_per_contract:.2f} per contract")
+                
+                # If we have hedge benefit information, log it
+                if 'hedge_benefit' in option_data:
+                    self.logger.info(f"[Position Sizing] Pre-calculated hedge benefit: ${option_data['hedge_benefit']:.2f}")
+            else:
+                # Fall back to simple calculation
+                margin_per_contract = option_price * 100 * self.max_leverage
+                self.logger.info(f"[Position Sizing] Using simple margin calculation: ${margin_per_contract:.2f} per contract")
         
         if margin_per_contract <= 0:
             self.logger.warning(
@@ -384,6 +411,32 @@ class RiskManager:
         # Store the last calculated margin_per_contract for reference by other components
         self._last_margin_per_contract = margin_per_contract
 
+        # Use helper method for position sizing calculation
+        return self._calculate_position_size_from_margin(
+            margin_per_contract, net_liq, available_margin, remaining_margin_capacity,
+            option_symbol, option_price, risk_scaling, option_data
+        )
+
+    def _calculate_position_size_from_margin(self, margin_per_contract: float, net_liq: float, 
+                                           available_margin: float, remaining_margin_capacity: float,
+                                           option_symbol: str, option_price: float, risk_scaling: float = 1.0,
+                                           option_data: Dict[str, Any] = None) -> int:
+        """
+        Calculate position size when margin per contract is already known.
+        
+        Args:
+            margin_per_contract: Pre-calculated margin per contract
+            net_liq: Net liquidation value
+            available_margin: Available margin
+            remaining_margin_capacity: Remaining margin capacity
+            option_symbol: Option symbol
+            option_price: Option price
+            risk_scaling: Risk scaling factor
+            option_data: Optional option data dictionary for enhanced logging
+            
+        Returns:
+            int: Number of contracts to trade
+        """
         # Calculate maximum contracts based on remaining margin capacity
         capacity_max_contracts = int(remaining_margin_capacity / margin_per_contract) if margin_per_contract > 0 else 0
 
@@ -418,40 +471,38 @@ class RiskManager:
         self.logger.info(f"[Position Sizing] Option: {option_symbol}")
         self.logger.info(f"  Price: ${option_price:.2f}, Margin per contract: ${margin_per_contract:.2f} (hedged)")
         
-        # Estimate hedge requirements and margin impact
-        # For short calls, delta is typically positive
-        # For short puts, delta is typically negative
-        delta = option_data.get('Delta', 0)
-        hedge_delta = -delta  # Opposite direction of option delta
-        hedge_shares = abs(hedge_delta) * 100  # 100 shares per contract
-        hedge_value = hedge_shares * underlying_price
-        hedge_margin_rate = 0.25  # Typical margin rate for long equity
-        estimated_hedge_margin = hedge_value * hedge_margin_rate
+        # Estimate hedge requirements and margin impact if option_data is available
+        if option_data:
+            delta = option_data.get('Delta', 0)
+            underlying_price = option_data.get('UnderlyingPrice', 0)
+            
+            if delta != 0 and underlying_price > 0:
+                hedge_delta = -delta  # Opposite direction of option delta
+                hedge_shares = abs(hedge_delta) * 100  # 100 shares per contract
+                hedge_value = hedge_shares * underlying_price
+                hedge_margin_rate = 0.25  # Typical margin rate for long equity
+                estimated_hedge_margin = hedge_value * hedge_margin_rate
+                
+                self.logger.info(f"  Hedge estimation (per contract):")
+                self.logger.info(f"    Option delta: {delta:.4f}, Hedge delta: {hedge_delta:.4f}")
+                self.logger.info(f"    Hedge shares: {hedge_shares:.0f} of underlying at ${underlying_price:.2f}")
+                self.logger.info(f"    Hedge value: ${hedge_value:.2f}, Estimated hedge margin: ${estimated_hedge_margin:.2f}")
+                self.logger.info(f"    Total estimated margin (with hedge): ${margin_per_contract + estimated_hedge_margin:.2f}")
+                
+                # Estimate total position margin (for informational purposes)
+                total_option_margin = contracts * margin_per_contract
+                total_hedge_margin = contracts * estimated_hedge_margin
+                self.logger.info(f"  Estimated total margin (informational):")
+                self.logger.info(f"    Option position ({contracts} contracts): ${total_option_margin:.2f}")
+                self.logger.info(f"    Hedge position: ${total_hedge_margin:.2f}")
+                self.logger.info(f"    Combined (before portfolio offsets): ${total_option_margin + total_hedge_margin:.2f}")
+                self.logger.info(f"    Note: Actual margin will be less due to portfolio margin offsets")
         
-        self.logger.info(f"  Hedge estimation (per contract):")
-        self.logger.info(f"    Option delta: {delta:.4f}, Hedge delta: {hedge_delta:.4f}")
-        self.logger.info(f"    Hedge shares: {hedge_shares:.0f} of underlying at ${underlying_price:.2f}")
-        self.logger.info(f"    Hedge value: ${hedge_value:.2f}, Estimated hedge margin: ${estimated_hedge_margin:.2f}")
-        self.logger.info(f"    Total estimated margin (with hedge): ${margin_per_contract + estimated_hedge_margin:.2f}")
-        
-        self.logger.info(
-            f"  NLV: ${net_liq:.2f}, Maximum Margin: ${max_margin_alloc:.2f}, Current Margin: ${current_margin:.2f}")
-        self.logger.info(
-            f"  Remaining Capacity: ${remaining_margin_capacity:.2f}, Available Margin: ${available_margin:.2f}")
-        self.logger.info(
-            f"  Max NLV Percent: {self.max_nlv_percent:.2%}, Position limit: {max_position_contracts} contracts")
-        self.logger.info(
-            f"  Capacity limit: {capacity_max_contracts} contracts, Available margin limit: {available_max_contracts} contracts")
+        self.logger.info(f"  NLV: ${net_liq:.2f}, Maximum Margin: ${max_position_margin:.2f}, Current Margin: ${net_liq - available_margin:.2f}")
+        self.logger.info(f"  Remaining Capacity: ${remaining_margin_capacity:.2f}, Available Margin: ${available_margin:.2f}")
+        self.logger.info(f"  Max NLV Percent: {self.max_nlv_percent*100:.2f}%, Position limit: {max_position_contracts} contracts")
+        self.logger.info(f"  Capacity limit: {capacity_max_contracts} contracts, Available margin limit: {available_max_contracts} contracts")
         self.logger.info(f"  Risk scaling: {risk_scaling:.2f}")
         self.logger.info(f"  Final position size: {contracts} contracts")
         
-        # Estimate total position margin (for informational purposes)
-        total_option_margin = contracts * margin_per_contract
-        total_hedge_margin = contracts * estimated_hedge_margin
-        self.logger.info(f"  Estimated total margin (informational):")
-        self.logger.info(f"    Option position ({contracts} contracts): ${total_option_margin:.2f}")
-        self.logger.info(f"    Hedge position: ${total_hedge_margin:.2f}")
-        self.logger.info(f"    Combined (before portfolio offsets): ${total_option_margin + total_hedge_margin:.2f}")
-        self.logger.info(f"    Note: Actual margin will be less due to portfolio margin offsets")
-
         return contracts 

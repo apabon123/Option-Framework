@@ -3185,6 +3185,15 @@ class TradingEngine:
 
         # Pass the portfolio object for access to margin calculator
         portfolio_metrics['portfolio'] = self.portfolio
+        
+        # Check if we already have calculated margin and use it to avoid redundant calculation
+        if 'margin_per_contract' in instrument_data and instrument_data['margin_per_contract'] > 0:
+            self.logger.debug(f"Using pre-calculated margin from instrument_data: ${instrument_data['margin_per_contract']:.2f}")
+            # Store this information in the risk manager for later reference
+            if hasattr(self.risk_manager, '_set_last_margin_per_contract'):
+                self.risk_manager._set_last_margin_per_contract(instrument_data['margin_per_contract'])
+            elif hasattr(self.risk_manager, '__dict__'):
+                self.risk_manager._last_margin_per_contract = instrument_data['margin_per_contract']
 
         # Log portfolio metrics being used for position sizing
         self.logger.debug(f"Portfolio metrics for position sizing:")
