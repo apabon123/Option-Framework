@@ -661,7 +661,8 @@ class Portfolio:
         position_type: str = 'option',
         is_short: bool = False,
         execution_data: Optional[Dict[str, Any]] = None,
-        reason: Optional[str] = None
+        reason: Optional[str] = None,
+        skip_margin_calc: bool = False
     ) -> Optional[Union[Position, OptionPosition]]:
         """
         Add a new position to the portfolio.
@@ -675,6 +676,7 @@ class Portfolio:
             is_short: Whether position is short
             execution_data: Additional execution data
             reason: Reason for adding the position
+            skip_margin_calc: Whether to skip margin calculation (default: False)
             
         Returns:
             Position: The new position object
@@ -782,8 +784,9 @@ class Portfolio:
             # Log position addition
             self.logger.info(f"Added position: {quantity} {'short' if is_short else 'long'} {position_type} {symbol} @ {price}")
             
-            # Calculate and apply margin requirement
-            margin_requirement = self.calculate_margin_requirement()
+            # Calculate and apply margin requirement (unless skipped)
+            if not skip_margin_calc:
+                margin_requirement = self.calculate_margin_requirement()
             
             # Check if we have enough cash for the position
             position_value = self._calculate_position_value(position_type, quantity, price, is_short)
@@ -843,7 +846,8 @@ class Portfolio:
         quantity: Optional[int] = None, 
         price: Optional[float] = None,
         execution_data: Optional[Dict[str, Any]] = None,
-        reason: str = "Close"
+        reason: str = "Close",
+        skip_margin_calc: bool = False
     ) -> float:
         """
         Remove a position or reduce its size.
@@ -854,6 +858,7 @@ class Portfolio:
             price: Execution price (None = use current price)
             execution_data: Additional execution data
             reason: Reason for removing the position
+            skip_margin_calc: Whether to skip margin calculation (default: False)
             
         Returns:
             float: Realized P&L from closing the position
@@ -899,6 +904,10 @@ class Portfolio:
         
         # Update portfolio value
         self._update_portfolio_value()
+        
+        # Recalculate margin requirement (unless skipped)
+        if not skip_margin_calc:
+            self.calculate_margin_requirement()
         
         # Record transaction
         transaction = {

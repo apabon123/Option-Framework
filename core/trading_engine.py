@@ -2298,7 +2298,8 @@ class TradingEngine:
                 pnl = self.portfolio.remove_position(
                     symbol=symbol,
                     price=price,
-                    reason=reason
+                    reason=reason,
+                    skip_margin_calc=True  # Skip redundant margin calculation
                 )
 
                 # Categorize the reason for closing
@@ -2512,23 +2513,19 @@ class TradingEngine:
                 position = self.portfolio.positions[symbol]
                 quantity = position.contracts
 
-                # Create execution_data with the provided current date
-                execution_data = {'date': current_date}
-
                 pnl = self.portfolio.remove_position(
                     symbol=symbol,
-                    quantity=quantity,
                     price=price,
-                    execution_data=execution_data,
-                    reason=reason
+                    reason=reason,
+                    skip_margin_calc=True  # Skip redundant margin calculation
                 )
 
                 # Categorize the reason for closing
                 close_category = self._categorize_close_reason(reason)
 
-                # Enhanced logging for PnL with reason - include both category and full reason
+                # Log detailed info about the closed position
                 self.logger.info(
-                    f"[TradeManager] Closed position - Reason: {close_category} - Detail: {reason} - P&L: ${pnl:,.2f}")
+                    f"[TradeManager] Closed position {symbol} - Reason: {close_category} - Detail: {reason} - P&L: ${pnl:,.2f}")
             else:
                 self.logger.warning(
                     f"Cannot close position {symbol} - not found in portfolio")
@@ -2805,18 +2802,11 @@ class TradingEngine:
                             f"[PHASE 6: SIZING] Position sizing returned zero quantity for {symbol}, skipping")
                         continue
 
-                    # Check margin impact before executing
-                    self.logger.info(f"[PHASE 5: MARGIN] Checking margin impact for {symbol}")
-                    if not self._check_position_margin_impact(symbol, quantity, price, market_data_by_symbol):
-                        self.logger.warning(
-                            f"[PHASE 5: MARGIN] Skipping {symbol} due to margin constraints")
-                        continue
-
                 # PHASE 7: TRADE EXECUTION - Execute the primary trade
                 if instrument_data:
                     self.logger.info(f"[PHASE 7: EXECUTION] Executing trade for {symbol}")
                     
-                    # Add position
+                    # Add position - Pass skip_margin_calc=True to avoid redundant margin calculation
                     position = self.portfolio.add_position(
                         symbol=symbol,
                         instrument_data=instrument_data,
@@ -2826,7 +2816,8 @@ class TradingEngine:
                         is_short=is_short,
                         execution_data=execution_data,
                         # Pass the reason from the signal
-                        reason=signal.get('reason')
+                        reason=signal.get('reason'),
+                        skip_margin_calc=True  # Skip redundant margin calculation
                     )
 
                     # Enhanced logging
@@ -2874,7 +2865,7 @@ class TradingEngine:
                                 'UnderlyingPrice': hedge_price
                             }
 
-                            # Add hedge position to portfolio
+                            # Add hedge position to portfolio - Pass skip_margin_calc=True
                             self.portfolio.add_position(
                                 symbol=hedge_position.symbol,
                                 instrument_data=hedge_instrument_data,
@@ -2883,7 +2874,8 @@ class TradingEngine:
                                 position_type='stock',
                                 is_short=hedge_position.is_short,
                                 execution_data=execution_data,
-                                reason=f"Hedge for {symbol}"
+                                reason=f"Hedge for {symbol}",
+                                skip_margin_calc=True  # Skip redundant margin calculation
                             )
                 else:
                     self.logger.warning(
